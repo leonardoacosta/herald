@@ -40,10 +40,8 @@
 
 ## 4. Delete the old owner (gated)
 
-- [ ] 4.1 Disposition resolved (split — see proposal § Known collision): coordinate with
-      `voice-management-core` task 3.1 so the herdr-shepherd change is slimmed to dock-UI
-      scope in the same window `pkg/notify` is deleted there. Verify: the slimmed
-      proposal no longer cites `plugins/herdr-state/pkg/notify` paths.
+- [ ] 4.1 STOP-gate: confirm with Leo the disposition of open change
+      `add-notify-voice-management` (retarget to herald | park). Do not proceed unanswered.
 - [ ] 4.2 Delete moved files from herdr-shepherd; drop `pkg/notify` + the `notify`
       subcommand from `herdr-state`. Verify: `go build ./...` in herdr-shepherd passes;
       repo-wide grep for `pkg/notify` clean outside archives.

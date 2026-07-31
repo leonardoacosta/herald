@@ -53,15 +53,13 @@ repos. Herald becomes the one owner; every other repo is a consumer.
 - Do NOT touch `moshi-hook` wiring (that is `moshi-hook-parity`).
 - Do NOT touch shepherd's `bin/notify-pane.sh` beyond pointing it at the new NDJSON path.
 
-## Known collision — RESOLVED (2026-07-31, Leo)
+## Known collision
 
-herdr-shepherd's open change `add-notify-voice-management` is split, not parked: its
-surface-agnostic data layer (sections 1, 2, 4.2) is retargeted here as herald change
-`voice-management-core`; the dock UI half (section 3) stays in herdr-shepherd as a
-slimmed change consuming herald's CLI seams, still blocked on the herdr fork's
-`placement = "dock"`. When executing this extraction, do NOT delete `pkg/notify` from
-herdr-shepherd until the slimming edit of that change's proposal (voice-management-core
-task 3.1) is ready to land in the same window.
+herdr-shepherd has an open change `add-notify-voice-management` (dock voice management,
+blocked on the herdr fork) whose data layer is `pkg/notify` — the package this change
+moves. That proposal must be retargeted to herald (its tasks 1, 2, 4.2 are
+surface-agnostic per its own Retarget note) or explicitly parked. STOP and ask Leo which,
+before deleting `pkg/notify` from herdr-shepherd.
 
 ## Exemplars
 
