@@ -47,7 +47,7 @@ stack: infra
       duration arithmetic or epoch math remains in the markdown (`grep` for `multiplier` and
       `date +%s` is empty).
   - depends on: 1.2
-- [ ] 1.9 `bin/service-sync.sh` — install and supervise the service on the execution host under
+- [x] 1.9 `bin/service-sync.sh` — install and supervise the service on the execution host under
       **systemd** (the homelab box's supervisor, as `player-sync.sh` uses launchd and
       `kokoro-sync.sh` uses docker compose): unit file, restart on failure, start on boot,
       idempotent re-run, `--status`, `--remove`. Verify: fresh install starts it, a second run
