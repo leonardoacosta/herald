@@ -1,6 +1,9 @@
 package notify
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // Providers this pipe understands as the prefix of a qualified voice.
 //
@@ -28,14 +31,53 @@ type Voice struct {
 	Voice    string
 }
 
+// VoiceSource identifies which configuration layer supplied an effective
+// voice. Values are stable because CLI JSON consumers render them directly.
+type VoiceSource string
+
+const (
+	VoiceSourceProject VoiceSource = "project"
+	VoiceSourceDefault VoiceSource = "default"
+	VoiceSourceBuiltin VoiceSource = "builtin"
+)
+
+// EffectiveVoice is the read model exposed to operator surfaces.
+type EffectiveVoice struct {
+	Project   string      `json:"project"`
+	Stored    string      `json:"stored"`
+	Effective string      `json:"effective"`
+	Source    VoiceSource `json:"source"`
+}
+
 // String re-renders the qualified form, so a resolved Voice can be written
 // straight into a history record.
 func (v Voice) String() string { return v.Provider + ":" + v.Voice }
 
-// DefaultVoices is the configuration used when voices.json does not exist:
-// the built-in default voice and no per-project overrides.
+// Effective reports both the stored project override and the qualified voice
+// that normal notification resolution will use.
+func (v Voices) Effective(project string) EffectiveVoice {
+	if id, ok := v.Projects[project]; ok && strings.TrimSpace(id) != "" {
+		return EffectiveVoice{
+			Project: project, Stored: id,
+			Effective: ParseQualified(id).String(), Source: VoiceSourceProject,
+		}
+	}
+	if strings.TrimSpace(v.Default) != "" {
+		return EffectiveVoice{
+			Project: project, Effective: ParseQualified(v.Default).String(),
+			Source: VoiceSourceDefault,
+		}
+	}
+	return EffectiveVoice{
+		Project: project, Effective: DefaultVoice, Source: VoiceSourceBuiltin,
+	}
+}
+
+// DefaultVoices is the empty configuration used when voices.json does not
+// exist. Resolve still supplies DefaultVoice; keeping Default empty preserves
+// the distinction between a configured default and the built-in fallback.
 func DefaultVoices() Voices {
-	return Voices{Default: DefaultVoice, Projects: map[string]string{}}
+	return Voices{Projects: map[string]string{}}
 }
 
 // ParseQualified splits a voices.json value into provider and voice.
@@ -79,6 +121,34 @@ func (v Voices) Resolve(project string) Voice {
 		return ParseQualified(v.Default)
 	}
 	return ParseQualified(DefaultVoice)
+}
+
+// SetProjectVoice stores a newly validated Kokoro selection for one project.
+// Legacy values remain readable but cannot be introduced through management.
+func (v *Voices) SetProjectVoice(project string, voice Voice) error {
+	project = strings.TrimSpace(project)
+	if project == "" {
+		return fmt.Errorf("notify: project code is required")
+	}
+	if voice.Provider != ProviderKokoro || strings.TrimSpace(voice.Voice) == "" {
+		return fmt.Errorf("notify: new project voices must use a non-empty %s selection", ProviderKokoro)
+	}
+	if v.Projects == nil {
+		v.Projects = map[string]string{}
+	}
+	v.Projects[project] = voice.String()
+	return nil
+}
+
+// RemoveProjectVoice clears only one project's override. Resolution then falls
+// through to the configured or built-in default as before.
+func (v *Voices) RemoveProjectVoice(project string) error {
+	project = strings.TrimSpace(project)
+	if project == "" {
+		return fmt.Errorf("notify: project code is required")
+	}
+	delete(v.Projects, project)
+	return nil
 }
 
 // ResolveVoice reads voices.json from dir and resolves project against it.

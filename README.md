@@ -61,6 +61,26 @@ Legacy `HERDR_*` notification variables remain fallback reads for one release.
 Service lifecycle is managed by `bin/kokoro-sync.sh`; the committed Compose module
 requires `KOKORO_BIND_TAILSCALE_IP` and never embeds a host address.
 
+### Voice management
+
+The same binary exposes read/manage seams for operator surfaces:
+
+```sh
+bin/herald notify voices --json
+bin/herald notify catalog --json
+bin/herald notify audition --voice kokoro:af_bella
+bin/herald notify set --project hs --voice kokoro:af_bella
+bin/herald notify reset --project hs
+```
+
+Project choices come from `HERALD_PROJECTS_TOML`, the one-release
+`SHEPHERD_PROJECTS_TOML` fallback, `$DOTFILES/home/projects.toml`, or the installfest
+default, in that order. Reads and normal notification resolution never require the
+catalog. New Kokoro assignments are catalog-validated and written atomically at mode
+0600; legacy bare values and unrelated mappings are preserved. Audition always uses a
+fixed harmless sentence, discards the audio, and never writes notification history or
+contacts the playback host.
+
 ## Status
 
 The core pipe extraction is implemented and archived. See `openspec/changes/` for the

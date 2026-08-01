@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -10,7 +11,7 @@ import (
 	"time"
 )
 
-// RunCLI implements `herald notify <synth|record>` and returns the process
+// RunCLI implements `herald notify <subcommand>` and returns the process
 // exit code.
 //
 // # Why this seam exists
@@ -41,17 +42,31 @@ import (
 // its hot path, and a voice string can never contain a newline, so a single
 // stdout line is unambiguous.
 func RunCLI(args []string) int {
+	return runCLI(args, os.Stdout, os.Stderr)
+}
+
+func runCLI(args []string, stdout, stderr io.Writer) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: herald notify <synth|record> ...")
+		fmt.Fprintln(stderr, "usage: herald notify <synth|record|voices|catalog|set|reset|audition> ...")
 		return 1
 	}
 	switch args[0] {
 	case "synth":
-		return runSynth(args[1:], os.Stdout, os.Stderr)
+		return runSynth(args[1:], stdout, stderr)
 	case "record":
-		return runRecord(args[1:], os.Stderr)
+		return runRecord(args[1:], stderr)
+	case "voices":
+		return runVoices(args[1:], stdout, stderr)
+	case "catalog":
+		return runCatalog(args[1:], stdout, stderr)
+	case "set":
+		return runSetVoice(args[1:], stdout, stderr)
+	case "reset":
+		return runResetVoice(args[1:], stdout, stderr)
+	case "audition":
+		return runAudition(args[1:], stdout, stderr)
 	default:
-		fmt.Fprintf(os.Stderr, "herald notify: unknown subcommand %q\n", args[0])
+		fmt.Fprintf(stderr, "herald notify: unknown subcommand %q\n", args[0])
 		return 1
 	}
 }
@@ -62,6 +77,198 @@ func flagsOf(name string, w io.Writer) *flag.FlagSet {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(w)
 	return fs
+}
+
+func rejectPositionals(fs *flag.FlagSet, stderr io.Writer) bool {
+	if fs.NArg() == 0 {
+		return false
+	}
+	fmt.Fprintf(stderr, "%s: unexpected arguments: %s\n", fs.Name(), strings.Join(fs.Args(), " "))
+	return true
+}
+
+func configuredClient(timeoutSeconds float64) (*Client, error) {
+	return NewClient(ResolveBaseURL(), time.Duration(timeoutSeconds*float64(time.Second)))
+}
+
+func canonicalProject(code string) error {
+	if strings.TrimSpace(code) == "" {
+		return fmt.Errorf("notify: --project is required")
+	}
+	codes, err := CanonicalProjectCodes()
+	if err != nil {
+		return err
+	}
+	for _, candidate := range codes {
+		if candidate == code {
+			return nil
+		}
+	}
+	return fmt.Errorf("notify: project %q is not present in the canonical registry", code)
+}
+
+func runVoices(args []string, stdout, stderr io.Writer) int {
+	fs := flagsOf("notify voices", stderr)
+	asJSON := fs.Bool("json", false, "emit stable JSON")
+	if err := fs.Parse(args); err != nil || rejectPositionals(fs, stderr) {
+		return 1
+	}
+	codes, err := CanonicalProjectCodes()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	voices, err := ReadVoices(ResolveStateDir())
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	rows := make([]EffectiveVoice, 0, len(codes))
+	for _, code := range codes {
+		rows = append(rows, voices.Effective(code))
+	}
+	if *asJSON {
+		if err := json.NewEncoder(stdout).Encode(rows); err != nil {
+			fmt.Fprintf(stderr, "notify voices: encode output: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+	for _, row := range rows {
+		fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\n", row.Project, row.Stored, row.Effective, row.Source)
+	}
+	return 0
+}
+
+func runCatalog(args []string, stdout, stderr io.Writer) int {
+	fs := flagsOf("notify catalog", stderr)
+	asJSON := fs.Bool("json", false, "emit stable JSON")
+	timeout := fs.Float64("timeout", DefaultTimeout.Seconds(), "catalog timeout in seconds")
+	if err := fs.Parse(args); err != nil || rejectPositionals(fs, stderr) {
+		return 1
+	}
+	client, err := configuredClient(*timeout)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	voices, err := client.Catalog(context.Background())
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if *asJSON {
+		if err := json.NewEncoder(stdout).Encode(voices); err != nil {
+			fmt.Fprintf(stderr, "notify catalog: encode output: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+	for _, voice := range voices {
+		fmt.Fprintf(stdout, "%s\t%s\n", voice.ID, voice.Name)
+	}
+	return 0
+}
+
+func runSetVoice(args []string, stdout, stderr io.Writer) int {
+	fs := flagsOf("notify set", stderr)
+	project := fs.String("project", "", "canonical project code")
+	value := fs.String("voice", "", "provider-qualified Kokoro voice")
+	timeout := fs.Float64("timeout", DefaultTimeout.Seconds(), "catalog timeout in seconds")
+	if err := fs.Parse(args); err != nil || rejectPositionals(fs, stderr) {
+		return 1
+	}
+	if err := canonicalProject(*project); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if strings.TrimSpace(*value) == "" {
+		fmt.Fprintln(stderr, "notify set: --voice is required")
+		return 1
+	}
+	voice := ParseQualified(*value)
+	client, err := configuredClient(*timeout)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if err := client.ValidateVoice(context.Background(), voice); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	dir := ResolveStateDir()
+	voices, err := ReadVoices(dir)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if err := voices.SetProjectVoice(*project, voice); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if err := WriteVoices(dir, voices); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "%s\t%s\n", *project, voice.String())
+	return 0
+}
+
+func runResetVoice(args []string, stdout, stderr io.Writer) int {
+	fs := flagsOf("notify reset", stderr)
+	project := fs.String("project", "", "canonical project code")
+	if err := fs.Parse(args); err != nil || rejectPositionals(fs, stderr) {
+		return 1
+	}
+	if err := canonicalProject(*project); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	dir := ResolveStateDir()
+	voices, err := ReadVoices(dir)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if err := voices.RemoveProjectVoice(*project); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if err := WriteVoices(dir, voices); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "%s\t%s\n", *project, voices.Resolve(*project).String())
+	return 0
+}
+
+func runAudition(args []string, stdout, stderr io.Writer) int {
+	fs := flagsOf("notify audition", stderr)
+	value := fs.String("voice", "", "provider-qualified Kokoro voice")
+	timeout := fs.Float64("timeout", DefaultTimeout.Seconds(), "audition timeout in seconds")
+	if err := fs.Parse(args); err != nil || rejectPositionals(fs, stderr) {
+		return 1
+	}
+	if strings.TrimSpace(*value) == "" {
+		fmt.Fprintln(stderr, "notify audition: --voice is required")
+		return 1
+	}
+	voice := ParseQualified(*value)
+	client, err := configuredClient(*timeout)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if err := client.ValidateVoice(context.Background(), voice); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if err := client.Audition(context.Background(), voice); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	fmt.Fprintln(stdout, voice.String())
+	return 0
 }
 
 func runSynth(args []string, stdout, stderr io.Writer) int {

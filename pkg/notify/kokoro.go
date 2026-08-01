@@ -38,6 +38,7 @@ const BaseURLEnv = "HERALD_KOKORO_BASE_URL"
 // afplay plays natively, so nothing downstream transcodes.
 const (
 	speechPath    = "/v1/audio/speech"
+	catalogPath   = "/v1/audio/voices"
 	speechModel   = "kokoro"
 	speechFormat  = "mp3"
 	contentTypeJS = "application/json"
@@ -52,6 +53,11 @@ const (
 // indefinitely — bin/notify.sh's whole contract is that a caller is never
 // blocked past a bound.
 const DefaultTimeout = 30 * time.Second
+
+// AuditionText is the only text accepted by the management audition path.
+// Keeping it constant prevents the management surface from becoming a second
+// arbitrary-text notification path.
+const AuditionText = "Hello. This is a short Herald voice audition."
 
 // ErrNoBaseURL is returned when the service address is unconfigured. It is a
 // distinct error because it is an operator-fixable configuration fault, not a
@@ -72,6 +78,16 @@ type Client struct {
 	HTTP    *http.Client
 }
 
+// CatalogVoice is one selectable entry from Kokoro's voice catalog.
+type CatalogVoice struct {
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+}
+
+type catalogResponse struct {
+	Voices []CatalogVoice `json:"voices"`
+}
+
 // NewClient builds a client bound to baseURL with a bounded timeout.
 //
 // The timeout lands on the http.Client rather than only on a per-call context
@@ -88,6 +104,78 @@ func NewClient(baseURL string, timeout time.Duration) (*Client, error) {
 		timeout = DefaultTimeout
 	}
 	return &Client{BaseURL: baseURL, HTTP: &http.Client{Timeout: timeout}}, nil
+}
+
+// Catalog returns the configured Kokoro endpoint's current voice inventory.
+func (c *Client) Catalog(ctx context.Context) ([]CatalogVoice, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+catalogPath, nil)
+	if err != nil {
+		return nil, fmt.Errorf("notify: build voice catalog request: %w", err)
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("notify: voice catalog request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return nil, fmt.Errorf("notify: voice catalog returned %s: %s",
+			resp.Status, strings.TrimSpace(string(snippet)))
+	}
+	var payload catalogResponse
+	dec := json.NewDecoder(io.LimitReader(resp.Body, 1<<20))
+	if err := dec.Decode(&payload); err != nil {
+		return nil, fmt.Errorf("notify: decode voice catalog: %w", err)
+	}
+	seen := make(map[string]struct{}, len(payload.Voices))
+	for _, voice := range payload.Voices {
+		if strings.TrimSpace(voice.ID) == "" {
+			return nil, errors.New("notify: voice catalog contains an empty id")
+		}
+		if _, exists := seen[voice.ID]; exists {
+			return nil, fmt.Errorf("notify: voice catalog contains duplicate id %q", voice.ID)
+		}
+		seen[voice.ID] = struct{}{}
+	}
+	return payload.Voices, nil
+}
+
+// ValidateVoice requires every component of a Kokoro voice or blend expression
+// to exist in the live catalog. Existing legacy values remain readable but are
+// never accepted as new selections.
+func (c *Client) ValidateVoice(ctx context.Context, voice Voice) error {
+	if voice.Provider != ProviderKokoro {
+		return fmt.Errorf("notify: cannot catalog-validate %s voice %q", voice.Provider, voice.String())
+	}
+	catalog, err := c.Catalog(ctx)
+	if err != nil {
+		return err
+	}
+	available := make(map[string]struct{}, len(catalog))
+	for _, item := range catalog {
+		available[item.ID] = struct{}{}
+	}
+	for _, component := range strings.Split(voice.Voice, "+") {
+		component = strings.TrimSpace(component)
+		if open := strings.LastIndex(component, "("); open > 0 && strings.HasSuffix(component, ")") {
+			component = strings.TrimSpace(component[:open])
+		}
+		if component == "" {
+			return fmt.Errorf("notify: invalid empty Kokoro voice component in %q", voice.Voice)
+		}
+		if _, ok := available[component]; !ok {
+			return fmt.Errorf("notify: Kokoro voice %q is not present in the live catalog", component)
+		}
+	}
+	return nil
+}
+
+// Audition synthesizes the fixed sample and discards the returned audio. It
+// deliberately has no state directory or transport dependency, so it cannot
+// change mappings, append history, or contact the playback host.
+func (c *Client) Audition(ctx context.Context, voice Voice) error {
+	_, err := c.Synthesize(ctx, AuditionText, voice)
+	return err
 }
 
 // speechRequest is the POST body. Field names are the wire's, not ours.

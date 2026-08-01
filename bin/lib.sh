@@ -30,6 +30,16 @@ herald_state_dir() {
   printf '%s\n' "${HERALD_STATE_DIR:-$HOME/.local/state/herald}"
 }
 
+# Canonical projects.toml path. The Herald variable wins, followed by the
+# one-release Shepherd fallback, DOTFILES, and the installfest default.
+herald_projects_toml() {
+  local path
+  path="${HERALD_PROJECTS_TOML:-}"
+  [ -n "$path" ] || path="${SHEPHERD_PROJECTS_TOML:-}"
+  [ -n "$path" ] || path="${DOTFILES:-$HOME/dev/personal/installfest}/home/projects.toml"
+  printf '%s\n' "$path"
+}
+
 # Path to the herald binary, or 1 if no executable can be found.
 herald_bin() {
   if [ -n "${HERALD_BIN:-}" ] && [ -x "$HERALD_BIN" ]; then

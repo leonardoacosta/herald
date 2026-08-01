@@ -23,8 +23,9 @@
 - [ ] 3.1 Author `plugin/commands/notify.md` with subcommands status / history / mute /
       unmute / test / voices / default-send, each an explicit shell snippet against
       `$HERALD`. Frontmatter per cc `commands/references/frontmatter-schema.md`
-      (`execution: blocking`). Verify: `/notify status` and `/notify history 5` in a live
-      cc session.
+      (`execution: blocking`). The `voices` subcommand MUST consume
+      `herald notify voices --json` and MUST NOT parse `voices.json` directly. Verify:
+      `/notify status`, `/notify history 5`, and `/notify voices` in a live cc session.
 - [ ] 3.2 `/notify test` runs the pipe with `--wait` and prints the resulting history
       line. Verify: audible + record shown.
 

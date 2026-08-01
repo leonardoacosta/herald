@@ -6,6 +6,54 @@ import (
 	"testing"
 )
 
+func TestEffectiveVoiceProjectOverride(t *testing.T) {
+	cases := []struct {
+		name      string
+		stored    string
+		effective string
+	}{
+		{name: "qualified", stored: "kokoro:af_bella", effective: "kokoro:af_bella"},
+		{name: "legacy bare", stored: "21m00Tcm4TlvDq8ikWAM", effective: "elevenlabs:21m00Tcm4TlvDq8ikWAM"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			voices := Voices{
+				Default:  "kokoro:af_heart",
+				Projects: map[string]string{"hs": tc.stored},
+			}
+			got := voices.Effective("hs")
+			if got.Project != "hs" || got.Stored != tc.stored || got.Effective != tc.effective || got.Source != VoiceSourceProject {
+				t.Fatalf("Effective(hs) = %+v, want stored=%q effective=%q source=%q", got, tc.stored, tc.effective, VoiceSourceProject)
+			}
+		})
+	}
+}
+
+func TestEffectiveVoiceInheritedDefault(t *testing.T) {
+	voices := Voices{
+		Default: "kokoro:af_heart",
+		Projects: map[string]string{
+			"blank": "  ",
+		},
+	}
+	for _, project := range []string{"unknown", "", "blank"} {
+		t.Run(project, func(t *testing.T) {
+			got := voices.Effective(project)
+			if got.Project != project || got.Stored != "" || got.Effective != "kokoro:af_heart" || got.Source != VoiceSourceDefault {
+				t.Fatalf("Effective(%q) = %+v, want inherited kokoro default", project, got)
+			}
+		})
+	}
+}
+
+func TestEffectiveVoiceBuiltinFallback(t *testing.T) {
+	voices := Voices{Projects: map[string]string{"blank": ""}}
+	got := voices.Effective("blank")
+	if got.Project != "blank" || got.Stored != "" || got.Effective != DefaultVoice || got.Source != VoiceSourceBuiltin {
+		t.Fatalf("Effective(blank) = %+v, want builtin fallback %q", got, DefaultVoice)
+	}
+}
+
 // The three paths task 1.2 names, one subtest each.
 func TestResolveThreePaths(t *testing.T) {
 	voices := Voices{
@@ -99,11 +147,14 @@ func TestReadVoicesMissingFileIsDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadVoices on a fresh dir: %v", err)
 	}
-	if got.Default != DefaultVoice {
-		t.Errorf("Default = %q, want %q", got.Default, DefaultVoice)
+	if got.Default != "" {
+		t.Errorf("Default = %q, want an absent configured default", got.Default)
 	}
 	if got.Resolve("hs").String() != DefaultVoice {
 		t.Errorf("an unconfigured host must still resolve a voice")
+	}
+	if effective := got.Effective("hs"); effective.Source != VoiceSourceBuiltin || effective.Effective != DefaultVoice {
+		t.Errorf("missing configuration effective voice = %+v, want builtin fallback", effective)
 	}
 }
 

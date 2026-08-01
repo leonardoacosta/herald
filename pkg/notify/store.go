@@ -141,16 +141,18 @@ func ReadVoices(dir string) (Voices, error) {
 	if err := json.Unmarshal(b, &v); err != nil {
 		return Voices{}, fmt.Errorf("notify: parse %s: %w", voicesFile, err)
 	}
-	if v.Default == "" {
-		v.Default = DefaultVoice
+	if v.Projects == nil {
+		v.Projects = map[string]string{}
 	}
 	return v, nil
 }
 
-// WriteVoices writes voices.json, indented, so the operator's next hand-edit
-// opens onto readable JSON. Used to seed a first-run config; the operator owns
-// the file after that.
+// WriteVoices atomically replaces voices.json with an indented mode-0600 file.
 func WriteVoices(dir string, v Voices) error {
+	return writeVoicesAtomic(dir, v, os.Rename)
+}
+
+func writeVoicesAtomic(dir string, v Voices, rename func(string, string) error) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("notify: mkdir %s: %w", dir, err)
 	}
@@ -159,9 +161,36 @@ func WriteVoices(dir string, v Voices) error {
 		return fmt.Errorf("notify: encode %s: %w", voicesFile, err)
 	}
 	b = append(b, '\n')
-	if err := os.WriteFile(VoicesPath(dir), b, 0o600); err != nil {
-		return fmt.Errorf("notify: write %s: %w", voicesFile, err)
+	f, err := os.CreateTemp(dir, ".voices.json.*")
+	if err != nil {
+		return fmt.Errorf("notify: create temporary %s: %w", voicesFile, err)
 	}
+	tmp := f.Name()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = os.Remove(tmp)
+		}
+	}()
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("notify: chmod temporary %s: %w", voicesFile, err)
+	}
+	if _, err := f.Write(b); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("notify: write temporary %s: %w", voicesFile, err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("notify: sync temporary %s: %w", voicesFile, err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("notify: close temporary %s: %w", voicesFile, err)
+	}
+	if err := rename(tmp, VoicesPath(dir)); err != nil {
+		return fmt.Errorf("notify: replace %s: %w", voicesFile, err)
+	}
+	committed = true
 	return nil
 }
 
