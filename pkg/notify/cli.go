@@ -6,9 +6,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -48,7 +51,7 @@ func RunCLI(args []string) int {
 
 func runCLI(args []string, stdout, stderr io.Writer) int {
 	if len(args) < 1 {
-		fmt.Fprintln(stderr, "usage: herald notify <synth|record|voices|catalog|set|reset|audition|status|history|mute|unmute> ...")
+		fmt.Fprintln(stderr, "usage: herald notify <synth|record|voices|catalog|set|reset|audition|status|history|mute|unmute|serve> ...")
 		return 1
 	}
 	switch args[0] {
@@ -74,6 +77,8 @@ func runCLI(args []string, stdout, stderr io.Writer) int {
 		return runMute(args[1:], stdout, stderr)
 	case "unmute":
 		return runUnmute(args[1:], stdout, stderr)
+	case "serve":
+		return runServe(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "herald notify: unknown subcommand %q\n", args[0])
 		return 1
@@ -554,5 +559,46 @@ func runUnmute(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	fmt.Fprintln(stdout, "Herald unmuted.")
+	return 0
+}
+
+// runServe starts the resident HTTP service (task 1.4) and blocks until
+// SIGINT/SIGTERM, then shuts down gracefully.
+//
+// Deliberately the only subcommand that can fail on a misconfigured host
+// (unresolvable tailnet address, a port already in use) — AGENTS.md's
+// fail-soft contract binds `say_notify`'s pipe, not this opt-in daemon an
+// operator starts deliberately. A `serve` startup error here can never reach
+// `synth`, `record`, or any other subcommand: each is its own case in the
+// switch above, none call into this function.
+func runServe(args []string, stdout, stderr io.Writer) int {
+	fs := flagsOf("notify serve", stderr)
+	if err := fs.Parse(args); err != nil || rejectPositionals(fs, stderr) {
+		return 1
+	}
+
+	cfg, err := ResolveBindConfig(nil)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	listeners, err := Listen(cfg)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+
+	httpServer := &http.Server{Handler: NewServer().Mux}
+	fmt.Fprintf(stdout, "herald notify serve: version %s, listening on %s (loopback) and %s (tailnet)\n",
+		Version(), cfg.Loopback, cfg.Tailnet)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := Serve(ctx, httpServer, listeners...); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	fmt.Fprintln(stdout, "herald notify serve: shut down cleanly")
 	return 0
 }

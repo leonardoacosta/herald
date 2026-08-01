@@ -21,7 +21,7 @@ stack: infra
       silently), rename-after-complete so no drainer reads a partial clip, and the trap window
       covering mktemp-to-bytes-landed. Verify: Go tests assert each constraint; a delivery to an
       unreachable host records `transport_timeout` within the bound, not a hang.
-- [ ] 1.4 Add `herald notify serve` — HTTP listener bound to loopback AND the Tailscale
+- [x] 1.4 Add `herald notify serve` — HTTP listener bound to loopback AND the Tailscale
       address only, address resolved at start like `compose/kokoro.yml` does for Kokoro, never
       baked in and never `0.0.0.0`. Verify: listener answers on both addresses; binding is
       absent on any other interface.
