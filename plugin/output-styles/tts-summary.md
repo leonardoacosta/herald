@@ -47,7 +47,9 @@ Next step: **<id>** — <one clause: what it is / why it's pending>
 say_notify "<one natural conversational sentence, usually under 20 words>"
 ```
 
-`say_notify` is preloaded by `BASH_ENV`; do not source another helper first.
+`say_notify` is provided by the plugin for every tool shell: Bash receives the function through
+`BASH_ENV`, while the SessionStart hook places a thin adapter on PATH for zsh. Do not source
+another helper first.
 
 It speaks through Herald's `$HERALD/bin/notify.sh` pipe (Kokoro synthesis and configured
 playback). It always exits 0 and is bounded by a timeout, so an unavailable playback host

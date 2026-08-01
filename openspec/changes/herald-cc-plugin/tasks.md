@@ -7,8 +7,10 @@
       name `notify`, and matching `commands/notify.md` so the command remains `/notify`.
       Verify: JSON parses; Claude validates and imports the local marketplace/plugin.
 - [ ] 1.2 Move cc `scripts/lib/notify.sh` → `plugin/lib/notify.sh` unchanged except the
-      header. cc `scripts/lib/bash-env.sh` sources the plugin path. Verify: new cc session,
-      `type say_notify` reports a function with zero source lines in the calling command.
+      header. cc `scripts/lib/bash-env.sh` sources the plugin path, and the SessionStart hook
+      exports a thin `plugin/bin/say_notify` adapter through `CLAUDE_ENV_FILE` because Claude's
+      Bash tool uses zsh on this host. Verify: new cc session, `type say_notify` resolves with
+      zero source lines in the calling command under both Bash and zsh.
 - [ ] 1.3 Move cc `output-styles/tts-summary.md` → `plugin/output-styles/` and inject it
       through a fail-soft `SessionStart` hook as additional context. Remove cc's stale
       `outputStyle` setting. Verify: a new plugin-enabled session receives the guidance.

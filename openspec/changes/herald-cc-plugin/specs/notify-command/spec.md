@@ -38,3 +38,8 @@ BASH_ENV; no harness repo SHALL carry its own copy of the helper.
 
 - **WHEN** a non-interactive cc bash shell starts
 - **THEN** `say_notify` resolves as a function with no explicit source line in the caller
+
+#### Scenario: Login-shell tool calls resolve the same helper
+
+- **WHEN** Claude's Bash tool starts the operator's zsh login shell
+- **THEN** `say_notify` resolves from the plugin's PATH adapter and delegates to the same function and pipe

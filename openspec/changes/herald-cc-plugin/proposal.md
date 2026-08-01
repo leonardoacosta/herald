@@ -48,7 +48,9 @@ than carrying their own copies.
   - `plugin/lib/projects-toml.sh` — the helper's adjacent project resolver dependency
   - `plugin/output-styles/tts-summary.md` — moved from cc `output-styles/tts-summary.md`;
     a fail-soft `SessionStart` hook injects it as plugin-owned additional context because
-    output-style directories are not a Claude Code plugin component
+    output-style directories are not a Claude Code plugin component. The same hook exports the
+    plugin `bin/` directory through `CLAUDE_ENV_FILE`, giving zsh tool calls a thin
+    `say_notify` adapter while Bash keeps the preloaded function.
 - **cc afterwards**: imports the herald plugin; `scripts/lib/bash-env.sh:11` sources the
   plugin's lib path; `notify-command` spec rewritten against the herald backend (all Nexus
   references gone); `orch_tts_notify` (orchestrator-helpers.sh:339-344) collapses to a

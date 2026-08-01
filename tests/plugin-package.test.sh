@@ -19,15 +19,19 @@ for subcommand in status history mute unmute test voices; do
   rg -q "${subcommand}" "$PLUGIN/commands/notify.md"
 done
 rg -q 'notify voices --json' "$PLUGIN/commands/notify.md"
+rg -q 'root#\\~/' "$PLUGIN/commands/notify.md"
 if rg -q 'voices\.json' "$PLUGIN/commands/notify.md"; then
   echo "notify command parses voices.json directly" >&2
   exit 1
 fi
 
-CLAUDE_PLUGIN_ROOT="$PLUGIN" "$PLUGIN/hooks-handlers/session-start.sh" > "$TMP/context.json"
+CLAUDE_PLUGIN_ROOT="$PLUGIN" CLAUDE_ENV_FILE="$TMP/session-env" \
+  "$PLUGIN/hooks-handlers/session-start.sh" > "$TMP/context.json"
 jq -e '.hookSpecificOutput.hookEventName == "SessionStart" and
   (.hookSpecificOutput.additionalContext | contains("NON-NEGOTIABLE Closing Ritual"))' \
   "$TMP/context.json" >/dev/null
+zsh -c 'source "$1"; command -v say_notify' _ "$TMP/session-env" | \
+  rg -q '/plugin/bin/say_notify$'
 CLAUDE_PLUGIN_ROOT="$TMP/missing" "$PLUGIN/hooks-handlers/session-start.sh" >/dev/null
 
 mkdir -p "$TMP/herald/bin"
@@ -40,5 +44,8 @@ chmod +x "$TMP/herald/bin/notify.sh"
 HERALD="$TMP/herald" HERALD_TEST_CAPTURE="$TMP/capture" \
   bash -c 'source "$1"; say_notify -p hs "plugin smoke"' _ "$PLUGIN/lib/notify.sh"
 [ "$(cat "$TMP/capture")" = "-p hs plugin smoke" ]
+HERALD="$TMP/herald" HERALD_TEST_CAPTURE="$TMP/capture" \
+  "$PLUGIN/bin/say_notify" -p hs "cross-shell smoke"
+[ "$(cat "$TMP/capture")" = "-p hs cross-shell smoke" ]
 
 echo "plugin package: manifests, command, hook context, and caller helper passed"

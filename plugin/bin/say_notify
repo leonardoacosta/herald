@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Cross-shell adapter installed on PATH by the SessionStart hook. This is not a
+# second speech path: it loads and invokes the plugin's sole say_notify function.
+set +e
+
+plugin_root="$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)"
+if [ -n "$plugin_root" ] && [ -r "$plugin_root/lib/notify.sh" ]; then
+  # shellcheck source=/dev/null
+  source "$plugin_root/lib/notify.sh" 2>/dev/null || exit 0
+  say_notify "$@"
+fi
+
+exit 0

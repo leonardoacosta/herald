@@ -22,6 +22,7 @@ Kokoro health URL:
 ```bash
 root="${HERALD:-}"
 if [ -z "$root" ]; then echo 'Herald unavailable: $HERALD is unset'; exit 0; fi
+case "$root" in \~/*) root="$HOME/${root#\~/}" ;; esac
 pipe="$root/bin/notify.sh"
 bin="${HERALD_BIN:-$root/bin/herald}"
 state="${HERALD_STATE_DIR:-$HOME/.local/state/herald}"
@@ -79,9 +80,10 @@ echo 'Herald unmuted.'
 Run a fixed, blocking round trip and print only the record it created:
 
 ```bash
-if [ -z "${HERALD:-}" ] || [ ! -x "$HERALD/bin/notify.sh" ]; then echo 'Herald pipe unavailable.'; exit 0; fi
+root="${HERALD:-}"; case "$root" in \~/*) root="$HOME/${root#\~/}" ;; esac
+if [ -z "$root" ] || [ ! -x "$root/bin/notify.sh" ]; then echo 'Herald pipe unavailable.'; exit 0; fi
 state="${HERALD_STATE_DIR:-$HOME/.local/state/herald}"
-"$HERALD/bin/notify.sh" --wait 'Herald notification test completed.'
+"$root/bin/notify.sh" --wait 'Herald notification test completed.'
 [ -f "$state/notify.ndjson" ] && tail -n 1 "$state/notify.ndjson" | jq .
 ```
 
@@ -90,8 +92,9 @@ state="${HERALD_STATE_DIR:-$HOME/.local/state/herald}"
 Consume the stable CLI view; do not parse Herald's storage directly:
 
 ```bash
-if [ -z "${HERALD:-}" ]; then echo 'Herald unavailable: $HERALD is unset'; exit 0; fi
-bin="${HERALD_BIN:-$HERALD/bin/herald}"
+root="${HERALD:-}"; case "$root" in \~/*) root="$HOME/${root#\~/}" ;; esac
+if [ -z "$root" ]; then echo 'Herald unavailable: $HERALD is unset'; exit 0; fi
+bin="${HERALD_BIN:-$root/bin/herald}"
 "$bin" notify voices --json | jq -r '.[] | [.project,.stored,.effective,.source,(.speed // 0)] | @tsv'
 ```
 
@@ -100,6 +103,7 @@ bin="${HERALD_BIN:-$HERALD/bin/herald}"
 Preserve the complete argument text as one message and send it through the single pipe:
 
 ```bash
-if [ -z "${HERALD:-}" ] || [ ! -x "$HERALD/bin/notify.sh" ]; then echo 'Herald pipe unavailable.'; exit 0; fi
-"$HERALD/bin/notify.sh" "$NOTIFY_TEXT"
+root="${HERALD:-}"; case "$root" in \~/*) root="$HOME/${root#\~/}" ;; esac
+if [ -z "$root" ] || [ ! -x "$root/bin/notify.sh" ]; then echo 'Herald pipe unavailable.'; exit 0; fi
+"$root/bin/notify.sh" "$NOTIFY_TEXT"
 ```
