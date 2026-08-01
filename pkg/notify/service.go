@@ -203,6 +203,7 @@ type Server struct {
 func NewServer() *Server {
 	s := &Server{Mux: http.NewServeMux()}
 	s.Mux.HandleFunc("/health", handleHealth)
+	s.Mux.HandleFunc("/notify", NewSendQueue(SendQueueOptions{}).HandleNotify) // task 1.5, send.go
 	return s
 }
 

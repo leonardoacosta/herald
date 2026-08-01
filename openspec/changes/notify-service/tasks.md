@@ -26,7 +26,7 @@ stack: infra
       baked in and never `0.0.0.0`. Verify: listener answers on both addresses; binding is
       absent on any other interface.
   - depends on: 1.1
-- [ ] 1.5 `POST /notify {text, project}` — validate, check mute, enqueue, return `202`
+- [x] 1.5 `POST /notify {text, project}` — validate, check mute, enqueue, return `202`
       immediately. Synthesis and delivery run on an async worker using 1.3. Exactly one history
       record per accepted request, whatever the outcome. Verify: httptest asserts the response
       returns in milliseconds while synthesis is stubbed slow, and that one record lands per
