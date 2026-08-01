@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # serial-playback tasks 2.2 / 2.3 / 3.1 — the spool + drainer algorithm.
 #
-# Hermetic: the remote script is EXTRACTED from bin/notify.sh rather than
-# restated here (one source of truth — a copy would pass while the shipped
-# script rotted), its spool path is repointed at a temp dir, and a fake afplay
-# stands in for the real one. No ssh, no Mac, no audio.
+# Hermetic: the remote script is READ from pkg/notify/remote_spool.sh — the one
+# copy that bin/notify.sh reads and pkg/notify go:embeds — rather than restated
+# here, its spool path is repointed at a temp dir, and a fake afplay stands in
+# for the real one. No ssh, no Mac, no audio.
 #
 # Overlap is detected structurally, not by polling: the fake player brackets
 # each clip with START/END lines, so two players running at once necessarily
@@ -25,9 +25,10 @@ SPOOL="$TMP/spool"
 LOG="$TMP/play.log"
 : > "$LOG"
 
-# Extract the remote spool script and repoint it at the test spool.
-awk "/^read -r -d '' REMOTE_SPOOL <<'REMOTE'/{f=1;next} f&&/^REMOTE$/{exit} f" \
-  "$REPO/bin/notify.sh" | sed "s#/tmp/herald-spool#$SPOOL#g" > "$TMP/remote.sh"
+# Read the canonical remote spool script and repoint it at the test spool.
+# pkg/notify/remote_spool.sh is the ONE copy: bin/notify.sh reads it and
+# pkg/notify go:embeds it, so this test exercises exactly what ships.
+sed "s#/tmp/herald-spool#$SPOOL#g" "$REPO/pkg/notify/remote_spool.sh" > "$TMP/remote.sh"
 grep -q 'afplay' "$TMP/remote.sh" || { echo "extraction produced no drainer" >&2; exit 1; }
 
 # Fake afplay: brackets each PLAYBACK so overlap is visible in the log, and is

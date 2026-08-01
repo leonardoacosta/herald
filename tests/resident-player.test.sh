@@ -52,10 +52,9 @@ FAKE
 chmod +x "$TMP/bin/mpg123" "$TMP/bin/afplay"
 export PATH="$TMP/bin:$PATH" PLAY_LOG="$LOG"
 
-# The enqueue half of delivery, extracted from the shipped pipe so this test
-# cannot drift from what actually runs.
-awk "/^read -r -d '' REMOTE_SPOOL <<'REMOTE'/{f=1;next} f&&/^REMOTE\$/{exit} f" \
-  "$REPO/bin/notify.sh" | sed "s#/tmp/herald-spool#$SPOOL#g" > "$TMP/enqueue.sh"
+# The enqueue half of delivery, read from the canonical remote script both
+# bin/notify.sh and pkg/notify use, so this test cannot drift from what runs.
+sed "s#/tmp/herald-spool#$SPOOL#g" "$REPO/pkg/notify/remote_spool.sh" > "$TMP/enqueue.sh"
 grep -q 'clip\.' "$TMP/enqueue.sh" || { echo "enqueue extraction failed" >&2; exit 1; }
 
 enqueue() { printf '%s' "$1" | sh "$TMP/enqueue.sh"; }

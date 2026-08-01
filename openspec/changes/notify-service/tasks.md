@@ -14,7 +14,7 @@ stack: infra
       existing `voices --json`. Status carries a build version so a client can detect skew
       against a stale running service. Verify: `herald notify status --json` and
       `herald notify history --json -n 5` emit parseable JSON with the pipe down.
-- [ ] 1.3 Port the delivery leg into `pkg/notify`: spool enqueue (write to a dot-prefixed name,
+- [x] 1.3 Port the delivery leg into `pkg/notify`: spool enqueue (write to a dot-prefixed name,
       rename in only once complete) and ssh transport. ALL FOUR documented constraints carry
       across from `bin/notify.sh`'s comment block, which is the spec for this task — the
       `timeout(1)` wrapper bounding wall clock, NO `ssh -n` (it discards the piped audio
