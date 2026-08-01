@@ -174,20 +174,34 @@ func runCatalog(args []string, stdout, stderr io.Writer) int {
 func runSetVoice(args []string, stdout, stderr io.Writer) int {
 	fs := flagsOf("notify set", stderr)
 	project := fs.String("project", "", "canonical project code")
+	setDefault := fs.Bool("default", false, "set the default voice")
 	value := fs.String("voice", "", "provider-qualified Kokoro voice")
+	speed := fs.Float64("speed", 0, "speech speed (0 for engine default, or 0.5 through 2.0)")
 	timeout := fs.Float64("timeout", DefaultTimeout.Seconds(), "catalog timeout in seconds")
 	if err := fs.Parse(args); err != nil || rejectPositionals(fs, stderr) {
 		return 1
 	}
-	if err := canonicalProject(*project); err != nil {
-		fmt.Fprintln(stderr, err)
+	hasProject := strings.TrimSpace(*project) != ""
+	if *setDefault == hasProject {
+		fmt.Fprintln(stderr, "notify set: exactly one of --default or --project is required")
 		return 1
+	}
+	if hasProject {
+		if err := canonicalProject(*project); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
 	}
 	if strings.TrimSpace(*value) == "" {
 		fmt.Fprintln(stderr, "notify set: --voice is required")
 		return 1
 	}
+	if *speed != 0 && (*speed < 0.5 || *speed > 2.0) {
+		fmt.Fprintln(stderr, "notify set: --speed must be 0 or between 0.5 and 2.0")
+		return 1
+	}
 	voice := ParseQualified(*value)
+	voice.Speed = *speed
 	client, err := configuredClient(*timeout)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -203,15 +217,22 @@ func runSetVoice(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	if err := voices.SetProjectVoice(*project, voice); err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
+	target := *project
+	if *setDefault {
+		voices.Default = voice.String()
+		voices.DefaultSpeed = voice.Speed
+		target = "default"
+	} else {
+		if err := voices.SetProjectVoice(*project, voice); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
 	}
 	if err := WriteVoices(dir, voices); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "%s\t%s\n", *project, voice.String())
+	fmt.Fprintf(stdout, "%s\t%s\n", target, voice.String())
 	return 0
 }
 

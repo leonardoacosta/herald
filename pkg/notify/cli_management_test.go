@@ -123,6 +123,37 @@ func TestSetAndResetVoiceCLI(t *testing.T) {
 	}
 }
 
+func TestSetDefaultVoiceCLIWithSpeed(t *testing.T) {
+	state := setupManagementState(t)
+	if err := WriteVoices(state, Voices{
+		Default:  "legacy-default",
+		Projects: map[string]string{"cc": "legacy-cc"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"voices":[{"id":"af_heart"},{"id":"af_bella"}]}`))
+	}))
+	defer srv.Close()
+	t.Setenv(BaseURLEnv, srv.URL)
+
+	rc, stdout, stderr := runManagementCLI(t, "set", "--default", "--voice", "kokoro:af_heart+af_bella(2)", "--speed", "0.95")
+	if rc != 0 || stdout != "default\tkokoro:af_heart+af_bella(2)\n" || stderr != "" {
+		t.Fatalf("set default rc=%d stdout=%q stderr=%q", rc, stdout, stderr)
+	}
+	afterSet, err := ReadVoices(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterSet.Default != "kokoro:af_heart+af_bella(2)" || afterSet.DefaultSpeed != 0.95 || afterSet.Projects["cc"] != "legacy-cc" {
+		t.Fatalf("set default rewrote unrelated state or lost prosody: %+v", afterSet)
+	}
+	info, err := os.Stat(VoicesPath(state))
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("voices.json mode = %v err=%v, want 0600", info.Mode().Perm(), err)
+	}
+}
+
 func TestAuditionCLIIsFixedTextAndDoesNotWriteHistory(t *testing.T) {
 	state := setupManagementState(t)
 	var spoken string
@@ -166,6 +197,9 @@ func TestManagementCLIValidatesArgumentsAndCanonicalProjects(t *testing.T) {
 	for _, args := range [][]string{
 		{"set", "--project", "hs"},
 		{"set", "--voice", DefaultVoice},
+		{"set", "--default", "--project", "hs", "--voice", DefaultVoice},
+		{"set", "--default", "--voice", DefaultVoice, "--speed", "0.49"},
+		{"set", "--default", "--voice", DefaultVoice, "--speed", "2.01"},
 		{"set", "--project", "unknown", "--voice", DefaultVoice},
 		{"reset"},
 		{"reset", "--project", "unknown"},

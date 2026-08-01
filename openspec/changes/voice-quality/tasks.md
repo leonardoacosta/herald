@@ -16,7 +16,7 @@
 
 ## 2. Audition + default
 
-- [ ] 2.1 Script one audition run (fixed paragraph, candidates: `af_heart`,
+- [x] 2.1 Script one audition run (fixed paragraph, candidates: `af_heart`,
       `af_bella`, `af_nicole`, one blend, speeds 0.9/1.0) via `--wait`; Leo picks.
       Verify: chosen default written to `voices.json` with rationale in the commit body.
 
