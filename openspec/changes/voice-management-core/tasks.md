@@ -30,9 +30,10 @@ Path-renamed carry-over of `add-notify-voice-management` sections 1, 2, 4.2
 
 ## 3. Cross-repo reconciliation
 
-- [ ] 3.1 herdr-shepherd: slim `add-notify-voice-management` to dock-UI + docs only,
+- [x] 3.1 herdr-shepherd: slim `add-notify-voice-management` to dock-UI + docs only,
       Impact table rows for pkg/notify replaced by "consumes herald notify CLI seams";
-      note supersession pointer to this change. (Executes in that repo.)
+      note supersession pointer to this change. (Executed in herdr-shepherd local-only
+      commit `87596f09645dd4a5f25a0e2a52a44d978cd7c01d`.)
 - [ ] 3.2 herald-cc-plugin's `/notify voices` wired to the § 2.4 JSON seam (or a noted
       follow-up if that change already shipped).
 

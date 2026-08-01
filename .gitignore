@@ -1,4 +1,6 @@
 ._*
 **/._*
+.nfs*
+**/.nfs*
 .DS_Store
 bin/herald

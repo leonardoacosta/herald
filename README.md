@@ -31,12 +31,42 @@ Harness hook events
   → moshi-hook {claude,codex,pi}-hook   (Moshi mobile app: inbox, Live Activities, approvals)
 ```
 
+## Use
+
+Build the internal CLI once, then call the fail-soft pipe:
+
+```sh
+go build -o bin/herald ./cmd/herald
+bin/notify.sh -p <project-code> "message"
+bin/notify.sh --wait -p <project-code> "playback evidence"
+```
+
+`bin/notify.sh` always exits 0 and bounds synthesis and playback. Every non-empty
+attempt appends exactly one record to
+`${HERALD_STATE_DIR:-~/.local/state/herald}/notify.ndjson`, including synthesis,
+transport, timeout, and missing-binary failures. There is no local playback path
+or compatibility alias for an older transport.
+
+Configuration precedence is environment, optional
+`${HERALD_CONFIG_DIR:-~/.config/herald}/config`, then the documented default:
+
+| Environment | Config key | Default |
+| --- | --- | --- |
+| `HERALD_KOKORO_BASE_URL` | `NOTIFY_KOKORO_BASE_URL` | `http://127.0.0.1:8880` |
+| `HERALD_NOTIFY_PLAYBACK_HOST` | `NOTIFY_PLAYBACK_HOST` | `mac` |
+| `HERALD_NOTIFY_PLAYBACK_TIMEOUT` | `NOTIFY_PLAYBACK_TIMEOUT` | `10` seconds |
+| `HERALD_NOTIFY_SYNTH_TIMEOUT` | `NOTIFY_SYNTH_TIMEOUT` | `30` seconds |
+
+Legacy `HERDR_*` notification variables remain fallback reads for one release.
+Service lifecycle is managed by `bin/kokoro-sync.sh`; the committed Compose module
+requires `KOKORO_BIND_TAILSCALE_IP` and never embeds a host address.
+
 ## Status
 
-Bootstrapping. See `openspec/changes/` for the extraction and feature proposals, in dependency
-order:
+The core pipe extraction is implemented and archived. See `openspec/changes/` for the
+remaining feature proposals in dependency order:
 
-1. `extract-notify-pipeline` — move the pipe, Go package, and Kokoro module here
+1. `voice-management-core` — safe voice discovery, audition, and mapping management
 2. `herald-cc-plugin` — plugin packaging + the rebuilt `/notify` control surface
 3. `voice-quality` — speed, voice blending, normalization, speakable-text rules
 4. `deep-briefings` — on-demand long-form spoken summaries

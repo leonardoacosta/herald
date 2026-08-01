@@ -1,0 +1,103 @@
+# kokoro — Kokoro-FastAPI CPU synthesis service, owned by Herald.
+#
+# Installed onto the execution host (the homelab box) by bin/kokoro-sync.sh,
+# never by hand. The compose module lives here because this repo owns the whole
+# TTS capability — service, pipe, and state — and the homelab box is the
+# execution host only (openspec/changes/extract-notify-pipeline/proposal.md).
+#
+# `name:` is set explicitly so the compose project identity does not depend on
+# whatever directory kokoro-sync.sh happens to install into — the same reason
+# jobs-sync.sh keys its crontab region on a literal marker rather than position.
+name: herald-kokoro
+
+# The image ships the v1_0 model baked in (its Dockerfile runs download_model.py
+# at build with DOWNLOAD_MODEL=true), and its entrypoint re-downloads ONLY when
+# DOWNLOAD_MODEL is "true" at runtime. That variable is deliberately left unset
+# below: the baked model seeds the named volume on first mount and the volume
+# serves every later start, which is exactly the "read from cache rather than
+# re-downloaded" property task 4.7 checks after a restart.
+#
+# Tag pinned, digest recorded alongside it (task 1.0a). Resolved on homelab
+# 2026-07-25 via `docker buildx imagetools inspect`:
+#
+#   ghcr.io/remsky/kokoro-fastapi-cpu:v0.6.0
+#     index  sha256:d2c63627e80e32df7fab7f1e969c2b6b26272439d837ef195f40d4a82eca195e
+#     amd64  sha256:a90db069d79ebfafb2ae9cfc0a595cc02c85fb50e4175643ca351a2a96d1c3ec  <- this host
+#     arm64  sha256:32cd9da83be60fa93485619e7be82e814e0e78cc9c2d71115ab33857e6d6de39
+#
+# The tag is what `image:` carries rather than the digest: a digest pin makes
+# `docker compose pull` a no-op that can never pick up a rebuilt tag, and the
+# recorded digests above are the audit trail for what the tag pointed at when
+# this file was written. Re-resolve them in the same breath as any tag bump.
+services:
+  kokoro:
+    image: ghcr.io/remsky/kokoro-fastapi-cpu:v0.6.0
+    container_name: kokoro
+    # `always`, not `unless-stopped`: task 4.7 requires the service to come back
+    # unattended after a restart with no manual intervention.
+    restart: always
+
+    # Bind posture (task 1.0b): loopback + the Tailscale address, NEVER 0.0.0.0.
+    # Kokoro-FastAPI has no auth of any kind — the upstream client speaks to it
+    # with no credential (NexusShared/Synthesis/KokoroClient.swift) — so the bind
+    # address IS the access control. A 0.0.0.0 publish would put unauthenticated
+    # synthesis on the LAN.
+    #
+    # KOKORO_BIND_TAILSCALE_IP is injected by bin/kokoro-sync.sh from
+    # `tailscale ip -4`. It is required rather than defaulted: committed
+    # deployment output must never bake in a host address.
+    ports:
+      - "127.0.0.1:8880:8880"
+      - "${KOKORO_BIND_TAILSCALE_IP:?set KOKORO_BIND_TAILSCALE_IP}:8880:8880"
+
+    networks:
+      homelab:
+        # Free on 2026-07-25 — `docker network inspect homelab` listed .10, .53,
+        # .56, .81, .123, .128-.131, .140, .145, .151, .152, .154, .183,
+        # .192-.201, with .146 absent.
+        ipv4_address: 172.20.0.146
+
+    volumes:
+      # Mounted at the models parent, not at v1_0: an empty named volume is
+      # seeded from the image's content on first mount, so this both preserves
+      # the baked model and persists anything a later version downloads.
+      - kokoro-models:/app/api/src/models
+
+    security_opt:
+      - no-new-privileges:true
+
+    # Sized for CPU model load, not for a warm process. Loading Kokoro on CPU is
+    # tens of seconds of torch import + weight load before uvicorn answers
+    # anything, so start_period carries the cost and interval/timeout stay tight
+    # once it is up. curl is present in the image (installed alongside espeak-ng).
+    # 127.0.0.1 rather than localhost, for the same IPv6-first reason atlas.yml
+    # documents.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8880/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+
+    deploy:
+      resources:
+        limits:
+          # Kokoro is an 82M-parameter model, but the CPU runtime carries torch
+          # plus espeak-ng and holds the loaded weights resident. 4G is headroom
+          # over that on a host with ~16G available, and a ceiling low enough
+          # that a leak cannot take the box down.
+          memory: 4G
+
+    # No Traefik router, no subdomain, no certificate (task 1.0b). Declared
+    # explicitly rather than by omission so a future Traefik sweep that enables
+    # discovery by default cannot quietly expose this service — the same
+    # explicit-false posture compose/atlas.yml uses in the homelab repo.
+    labels:
+      - "traefik.enable=false"
+
+networks:
+  homelab:
+    external: true
+
+volumes:
+  kokoro-models:
