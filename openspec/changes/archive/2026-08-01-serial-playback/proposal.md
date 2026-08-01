@@ -62,6 +62,29 @@ playback host", which is all the pipe could ever attest to — it never waited f
 detached form. No new value enters `store.go`'s closed outcome set. This is the whole reason
 queueing was chosen over dropping: a `playback_busy` outcome would have forced that set open.
 
+## Measured (2026-08-01)
+
+**The defect, before**: two notify calls 1s apart left two `afplay` processes running
+together (pids 21551, 21571). After: one player, the second clip queued behind it.
+
+**Uncontended latency** (task 3.2), 10 interleaved runs each, zero-byte clip so playback
+duration cannot confound the delivery leg: spool 107ms mean (100-123) vs the old detached
+form 105ms mean (95-117) — +1ms, inside noise. No STOP. An earlier 3-run measurement with
+real audio showed +78ms; that did not survive a proper measurement and was an artifact of
+serialized runs partly waiting on playback.
+
+**Playback overhead**, against 1824ms of audio: `afplay` +760/+1264ms, `mpg123` +570/+1355ms,
+`ffplay` +750/+1533ms. All three land in the same band, so the cost is CoreAudio opening the
+output device, not the player — switching players fixes nothing. This is why the drainer
+plays a BATCH per pass: clips already spooled share one device open and run together with no
+pause. Concatenation is sound for these inputs (2.664s + 2.712s produced a joined file
+`afinfo` reports as 5.379s).
+
+**Residual, accepted**: two SEQUENTIAL notify calls are separated by synthesis (~3s), so the
+device closes between them and the next playback pays the open cost again. Batching cannot
+reach that case. Removing it needs a resident player holding the device open — a follow-on,
+not this change.
+
 ## Non-goals / out of scope
 
 - No streaming or interruptible playback; no mid-clip splicing.

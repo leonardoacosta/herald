@@ -24,6 +24,13 @@ attention (speech, mobile push, history, control surface), it does not belong he
   for retired transports.
 - **Briefings are explicit-only.** `say_brief` fires because the operator asked for a
   briefing. Never from a hook, an agent completion, a session-exit event, or a schedule.
+- **One voice at a time.** The playback host plays at most one clip at any moment.
+  Concurrent notifications are spooled and drained in arrival order by a single
+  mkdir-elected drainer — never mixed, never dropped. Concurrency is the normal case here
+  (two agents notifying at once), so anything that launches a player directly is a defect.
+  **Silence is the worse failure**: every ambiguous lock state resolves toward playing, and
+  a drainer that dies leaves a lock the next caller breaks rather than one that mutes the
+  host.
 
 ## Layout
 

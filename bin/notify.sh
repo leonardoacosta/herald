@@ -160,37 +160,125 @@ BYTES="$(wc -c < "$AUDIO" | tr -d ' ')"
 #    elsewhere in this proposal correctly use -n because they pipe nothing;
 #    copying that flag onto the delivery call is the footgun.
 #
-# 3. Ship to a remote mktemp and play from the file. afplay has no stdin mode
+# 3. Ship to a remote file and play from it. afplay has no stdin mode
 #    (`afplay -` -> "unknown argument: -"; `afplay /dev/stdin` -> AudioFileOpen
-#    failed). One ssh round trip does `cat > "$f"; afplay "$f"` — no scp, no
-#    second connection. The temp file needs no .mp3 extension: afplay sniffs
-#    content (verified against an extensionless file holding kokoro's output).
+#    failed). One ssh round trip does `cat > "$f"` — no scp, no second
+#    connection. The file needs no .mp3 extension: afplay sniffs content
+#    (verified against an extensionless file holding kokoro's output).
 #
 # 4. A trap guards the remote temp file so a timeout-killed ssh cannot leak
-#    audio into the Mac's /tmp.
+#    audio into the Mac's /tmp. The trap is cleared only AFTER the bytes land
+#    and the file is renamed into the spool — exactly the window a kill can
+#    interrupt. The `</dev/null` on the drainer matters: a backgrounded process
+#    still holding the ssh stdin channel keeps the connection open and defeats
+#    the point of detaching.
 #
-# The detached form clears that trap only AFTER handing the file to a
-# backgrounded player that owns cleanup itself — the trap covers exactly the
-# window between mktemp and the bytes landing, which is the window a kill can
-# interrupt. Its `</dev/null` matters: a backgrounded process still holding the
-# ssh stdin channel keeps the connection open and defeats the point of
-# detaching.
-read -r -d '' REMOTE_WAIT <<'REMOTE' || true
-f=$(mktemp /tmp/herald-notify.XXXXXX)
-trap 'rm -f "$f"' EXIT INT TERM
-cat > "$f"
-afplay "$f"
-REMOTE
+# ── Spooling (serial-playback) ──────────────────────────────────────────────
+# The obvious form — background `afplay` and return — mixes concurrent
+# notifications into unintelligible overlap, because CoreAudio is happy to play
+# two streams at once and nothing here took a turn. Reproduced 2026-08-01: two
+# calls 1s apart left two afplay processes running together.
+#
+# So delivery enqueues instead of playing. Each call writes its audio into a
+# spool and spawns a drainer CANDIDATE; exactly one candidate wins an atomic
+# mkdir lock and plays clips oldest-first, back to back, until the spool empties.
+# A clip arriving mid-playback is simply the next file the loop picks up, so the
+# stream continues into it rather than over it.
+#
+# Four things this shape gets right, each guarding a way the naive version breaks:
+#
+# a. The clip is written under a dot-prefixed name and RENAMED into `clip.*`
+#    only once complete. A drainer scanning mid-write would otherwise play a
+#    truncated file.
+# b. The claim happens INSIDE the backgrounded `sh -c`, not in this ssh session
+#    shell. `$$` does not change in a subshell, so a lock stamped with the ssh
+#    shell's pid would name a process that exits immediately and look stale to
+#    every later caller. `sh -c` gets a real pid of its own.
+# c. A stale lock is broken by RENAMING it aside, not by `rm -rf`. Two callers
+#    both finding a dead owner would otherwise both delete and both recreate,
+#    electing two drainers — the exact overlap this replaces. Only one `mv` can
+#    win, because the source stops existing.
+# d. On finding the spool empty the drainer releases the lock and RE-CHECKS. A
+#    clip landing in that window belongs to a candidate that already failed to
+#    claim and exited, so without the re-check it would sit unplayed until the
+#    next notification.
+#
+# Ordering is by mtime (`ls -tr`), not by name: macOS `date` has no sub-second
+# format, so two clips arriving in the same second cannot be ordered by a
+# timestamp in the filename.
+#
+# The drainer plays a BATCH per pass — every clip currently spooled, cat'd into
+# one file and handed to a single afplay — rather than one afplay per clip.
+# Measured 2026-08-01 on the playback host: afplay costs ~1.2s of process start
+# and audio-device open on top of the audio itself (1.824s of audio took 2.7-3.1s
+# of wall clock), which is an audible dead pause between clips and the gap Leo
+# reported. Concatenating is safe here because every clip is Kokoro mp3 from the
+# same service: mp3 frames concatenate, and afinfo confirms the joined duration
+# is the sum of its parts (2.664 + 2.712 -> 5.379s).
+#
+# The tradeoff this accepts: one corrupt clip now costs its whole batch rather
+# than only itself. Synthesis failures never reach the spool (bin/notify.sh
+# records synth_failed and returns long before delivery), so the realistic cause
+# is a truncated transfer — which the .incoming rename already prevents.
+#
+# Silence is the worse failure. Every ambiguous path here resolves toward
+# playing: a candidate that cannot claim exits quietly rather than blocking, and
+# a drainer that dies leaves a lock the next caller breaks.
+read -r -d '' REMOTE_SPOOL <<'REMOTE' || true
+SPOOL=/tmp/herald-spool
+umask 077
+mkdir -p "$SPOOL" || exit 1
 
-read -r -d '' REMOTE_DETACH <<'REMOTE' || true
-f=$(mktemp /tmp/herald-notify.XXXXXX)
-trap 'rm -f "$f"' EXIT INT TERM
-cat > "$f"
-nohup sh -c 'afplay "$0"; rm -f "$0"' "$f" </dev/null >/dev/null 2>&1 &
+tmp=$(mktemp "$SPOOL/.incoming.XXXXXX") || exit 1
+trap 'rm -f "$tmp"' EXIT INT TERM
+cat > "$tmp"
+clip="$SPOOL/clip.${tmp##*.}"
+mv "$tmp" "$clip" || exit 1
 trap - EXIT INT TERM
+
+nohup sh -c '
+SPOOL=/tmp/herald-spool
+LOCK="$SPOOL/drainer.lock"
+HELD=0
+cleanup() { [ "$HELD" = 1 ] && rm -rf "$LOCK"; return 0; }
+claim() {
+  if mkdir "$LOCK" 2>/dev/null; then printf "%s\n" "$$" > "$LOCK/pid"; HELD=1; return 0; fi
+  owner=$(cat "$LOCK/pid" 2>/dev/null)
+  if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null; then return 1; fi
+  mv "$LOCK" "$LOCK.stale.$$" 2>/dev/null || return 1
+  rm -rf "$LOCK.stale.$$"
+  if mkdir "$LOCK" 2>/dev/null; then printf "%s\n" "$$" > "$LOCK/pid"; HELD=1; return 0; fi
+  return 1
+}
+trap "" HUP
+trap cleanup EXIT INT TERM
+claim || exit 0
+while :; do
+  while :; do
+    batch=$(ls -tr "$SPOOL"/clip.* 2>/dev/null)
+    [ -n "$batch" ] || break
+    joined="$SPOOL/.playing.$$"
+    cat $batch > "$joined" 2>/dev/null
+    afplay "$joined" >/dev/null 2>&1
+    rm -f "$joined" $batch
+  done
+  HELD=0
+  rm -rf "$LOCK"
+  ls "$SPOOL"/clip.* >/dev/null 2>&1 || exit 0
+  claim || exit 0
+done
+' </dev/null >/dev/null 2>&1 &
+
+if [ "${HERALD_WAIT:-0}" = "1" ]; then
+  while [ -e "$clip" ]; do sleep 0.2; done
+fi
 REMOTE
 
-if [ "$WAIT" -eq 1 ]; then REMOTE_CMD="$REMOTE_WAIT"; else REMOTE_CMD="$REMOTE_DETACH"; fi
+# --wait blocks until this call's own clip has been played, which now means
+# waiting through anything already queued ahead of it. It exists for evidence
+# capture, where an empty spool is the normal case; PLAYBACK_TIMEOUT still bounds
+# it, so a --wait behind a long queue records transport_timeout rather than hanging.
+REMOTE_CMD="$(printf 'HERALD_WAIT=%s\n%s' "$WAIT" "$REMOTE_SPOOL")"
 
 SSH_ERR="$(mktemp -t herald-notify-ssh.XXXXXX)" || { warn "could not create a temp file"; exit 0; }
 trap 'rm -f "$AUDIO" "$SYNTH_ERR" "$SPEED_META" "$SSH_ERR"' EXIT INT TERM
