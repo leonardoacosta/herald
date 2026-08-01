@@ -4,3 +4,9 @@
 **/.nfs*
 .DS_Store
 bin/herald
+
+# OpenSpec decision ledgers stay local. They record cross-repo authorizations
+# and carry absolute paths plus private-repo file listings — internal process
+# state with no value to a reader of this repo, scrubbed from history 2026-08-01
+# before publication.
+**/decisions.jsonl
