@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestAppendRecordRoundTrip(t *testing.T) {
@@ -206,5 +207,75 @@ func TestAppendEscapesHostileText(t *testing.T) {
 	}
 	if got[0].Outcome != OutcomeSynthFailed {
 		t.Errorf("injected JSON changed the outcome: %q", got[0].Outcome)
+	}
+}
+
+// deep-briefings task 1.3: a 150-word briefing must not land in the history
+// verbatim. The spoken text is full-length; only the recorded copy is capped.
+func TestLongBriefingTextIsCappedInTheRecord(t *testing.T) {
+	dir := t.TempDir()
+	brief := strings.TrimSpace(strings.Repeat("briefing ", 150))
+	if words := len(strings.Fields(brief)); words != 150 {
+		t.Fatalf("fixture is %d words, want 150", words)
+	}
+	if utf8.RuneCountInString(brief) <= MaxRecordedText {
+		t.Fatalf("fixture is only %d runes — it cannot exercise the cap", utf8.RuneCountInString(brief))
+	}
+
+	if err := AppendRecord(dir, Record{Text: brief, Voice: DefaultVoice, Outcome: OutcomeDelivered}); err != nil {
+		t.Fatalf("AppendRecord with a briefing-length text: %v", err)
+	}
+	got, err := ReadHistory(dir)
+	if err != nil {
+		t.Fatalf("ReadHistory: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d records, want 1", len(got))
+	}
+	if n := utf8.RuneCountInString(got[0].Text); n != MaxRecordedText {
+		t.Errorf("recorded text is %d runes, want %d", n, MaxRecordedText)
+	}
+	if !strings.HasSuffix(got[0].Text, "…") {
+		t.Errorf("truncated text does not mark the cut: %q", got[0].Text)
+	}
+	if !strings.HasPrefix(got[0].Text, "briefing briefing") {
+		t.Errorf("truncation dropped the opening of the digest: %q", got[0].Text)
+	}
+}
+
+// The cut is rune-based: a multi-byte character straddling the boundary must
+// not be split into invalid UTF-8 on its way into the NDJSON.
+func TestTruncationDoesNotSplitAMultibyteRune(t *testing.T) {
+	dir := t.TempDir()
+	long := strings.Repeat("é", MaxRecordedText+50)
+
+	if err := AppendRecord(dir, Record{Text: long, Voice: DefaultVoice, Outcome: OutcomeDelivered}); err != nil {
+		t.Fatalf("AppendRecord: %v", err)
+	}
+	got, err := ReadHistory(dir)
+	if err != nil {
+		t.Fatalf("ReadHistory: %v", err)
+	}
+	if !utf8.ValidString(got[0].Text) {
+		t.Fatalf("truncation produced invalid UTF-8: %q", got[0].Text)
+	}
+	if n := utf8.RuneCountInString(got[0].Text); n != MaxRecordedText {
+		t.Errorf("recorded text is %d runes, want %d", n, MaxRecordedText)
+	}
+}
+
+// A short one-line notify call is the common case and must be untouched.
+func TestShortTextIsNotTruncated(t *testing.T) {
+	dir := t.TempDir()
+	short := "The apply run finished and every gate passed."
+	if err := AppendRecord(dir, Record{Text: short, Voice: DefaultVoice, Outcome: OutcomeDelivered}); err != nil {
+		t.Fatalf("AppendRecord: %v", err)
+	}
+	got, err := ReadHistory(dir)
+	if err != nil {
+		t.Fatalf("ReadHistory: %v", err)
+	}
+	if got[0].Text != short {
+		t.Errorf("short text was altered: %q", got[0].Text)
 	}
 }

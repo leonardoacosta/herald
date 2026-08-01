@@ -17,8 +17,13 @@ attention (speech, mobile push, history, control surface), it does not belong he
 - **History is the debugging surface.** Every notify attempt appends one record
   (delivered / muted / synth_failed / transport_timeout / transport_failed) — stderr on a
   fire-and-forget hook is not observability.
-- **Single speech path.** Exactly one function (`say_notify`) and one pipe. No parallel
-  speech implementations, no compatibility aliases for retired transports.
+- **Single speech path.** One pipe, one implementation. `say_brief` exists alongside
+  `say_notify` as a named entry point for long-form digests, but it is a bound — it delegates
+  to `say_notify` in the same file rather than reimplementing anything. A third name is only
+  legitimate on those same terms. No parallel speech implementations, no compatibility aliases
+  for retired transports.
+- **Briefings are explicit-only.** `say_brief` fires because the operator asked for a
+  briefing. Never from a hook, an agent completion, a session-exit event, or a schedule.
 
 ## Layout
 

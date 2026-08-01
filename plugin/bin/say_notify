@@ -1,13 +1,24 @@
 #!/usr/bin/env bash
 # Cross-shell adapter installed on PATH by the SessionStart hook. This is not a
-# second speech path: it loads and invokes the plugin's sole say_notify function.
+# second speech path: it loads and invokes the plugin's sole speech function.
+#
+# Installed under two names (say_brief is a symlink to this file) and dispatches
+# on the name it was invoked as, so the long-form bound stays defined in exactly
+# one place — plugin/lib/notify.sh — rather than being restated by a near-copy
+# of this adapter.
 set +e
+
+fn="$(basename "$0")"
+case "$fn" in
+  say_notify|say_brief) ;;
+  *) exit 0 ;;
+esac
 
 plugin_root="$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)"
 if [ -n "$plugin_root" ] && [ -r "$plugin_root/lib/notify.sh" ]; then
   # shellcheck source=/dev/null
   source "$plugin_root/lib/notify.sh" 2>/dev/null || exit 0
-  say_notify "$@"
+  "$fn" "$@"
 fi
 
 exit 0

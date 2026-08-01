@@ -15,7 +15,7 @@ jq -e '.hooks.SessionStart[0].hooks[0].command | contains("${CLAUDE_PLUGIN_ROOT}
 
 rg -q '^name: notify$' "$PLUGIN/commands/notify.md"
 rg -q '^execution: blocking$' "$PLUGIN/commands/notify.md"
-for subcommand in status history mute unmute test voices; do
+for subcommand in status history mute unmute test voices brief; do
   rg -q "${subcommand}" "$PLUGIN/commands/notify.md"
 done
 rg -q 'notify voices --json' "$PLUGIN/commands/notify.md"
@@ -32,6 +32,8 @@ jq -e '.hookSpecificOutput.hookEventName == "SessionStart" and
   "$TMP/context.json" >/dev/null
 zsh -c 'source "$1"; command -v say_notify' _ "$TMP/session-env" | \
   rg -q '/plugin/bin/say_notify$'
+zsh -c 'source "$1"; command -v say_brief' _ "$TMP/session-env" | \
+  rg -q '/plugin/bin/say_brief$'
 CLAUDE_PLUGIN_ROOT="$TMP/missing" "$PLUGIN/hooks-handlers/session-start.sh" >/dev/null
 
 mkdir -p "$TMP/herald/bin"
@@ -48,4 +50,42 @@ HERALD="$TMP/herald" HERALD_TEST_CAPTURE="$TMP/capture" \
   "$PLUGIN/bin/say_notify" -p hs "cross-shell smoke"
 [ "$(cat "$TMP/capture")" = "-p hs cross-shell smoke" ]
 
-echo "plugin package: manifests, command, hook context, and caller helper passed"
+# say_brief reaches the same pipe, through the same adapter, under both shells.
+HERALD="$TMP/herald" HERALD_TEST_CAPTURE="$TMP/capture" \
+  bash -c 'source "$1"; say_brief -p hs "digest smoke"' _ "$PLUGIN/lib/notify.sh"
+[ "$(cat "$TMP/capture")" = "-p hs digest smoke" ]
+HERALD="$TMP/herald" HERALD_TEST_CAPTURE="$TMP/capture" \
+  "$PLUGIN/bin/say_brief" -p hs "adapter digest smoke"
+[ "$(cat "$TMP/capture")" = "-p hs adapter digest smoke" ]
+
+# The whole point of say_brief is the raised bound, so assert it behaves rather
+# than that the file contains a "60". A pipe slower than the ambient
+# SAY_NOTIFY_TIMEOUT is dropped by say_notify and survives say_brief.
+cat > "$TMP/herald/bin/notify.sh" <<'SLOW'
+#!/usr/bin/env bash
+sleep 2
+printf '%s\n' "$*" > "$HERALD_TEST_CAPTURE"
+exit 0
+SLOW
+chmod +x "$TMP/herald/bin/notify.sh"
+
+rm -f "$TMP/capture"
+HERALD="$TMP/herald" HERALD_TEST_CAPTURE="$TMP/capture" \
+  bash -c 'SAY_NOTIFY_TIMEOUT=1; source "$1"; say_notify "slow"' _ "$PLUGIN/lib/notify.sh" 2>/dev/null
+[ ! -f "$TMP/capture" ] || { echo "say_notify ignored its bound" >&2; exit 1; }
+
+HERALD="$TMP/herald" HERALD_TEST_CAPTURE="$TMP/capture" \
+  bash -c 'SAY_NOTIFY_TIMEOUT=1; SAY_BRIEF_TIMEOUT=10; source "$1"; say_brief -p hs "slow digest"
+           [ "$SAY_NOTIFY_TIMEOUT" = "1" ] || { echo "say_brief leaked its bound" >&2; exit 1; }' \
+  _ "$PLUGIN/lib/notify.sh"
+[ "$(cat "$TMP/capture")" = "-p hs slow digest" ]
+
+# Briefings are explicit-only: no hook in this repo may reach for say_brief.
+if rg -q 'say_brief' "$PLUGIN/hooks-handlers" "$PLUGIN/hooks"; then
+  echo "a hook calls say_brief — briefings are explicit-request only" >&2
+  exit 1
+fi
+rg -q 'EXPLICIT REQUEST ONLY' "$PLUGIN/output-styles/tts-summary.md"
+rg -q 'brief me' "$PLUGIN/output-styles/tts-summary.md"
+
+echo "plugin package: manifests, command, hook context, and caller helpers passed"

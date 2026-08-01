@@ -58,6 +58,28 @@ degrades to a history record instead of holding the turn open.
 **NEVER `run_in_background: true`** — backgrounding attention speech can cause a notification
 loop when task-result delivery itself triggers another response.
 
+## Briefings on request
+
+When Leo says "brief me", "explain out loud", "talk me through it", or anything else asking to
+hear rather than read the state of the work, compose a 60–150 word spoken digest for that turn
+and send it with `say_brief` instead of `say_notify`:
+
+```bash
+say_brief "<60-150 words of natural prose: outcome, why it matters, decisions waiting, next step>"
+```
+
+Composition and register rules live in the `/notify` command's `brief` branch. The two that get
+violated: **speak effects, not mechanism**, and **no numbers he did not ask for**. A briefing
+that recites bounds, timings, and file counts is a changelog read aloud — say what Leo can now
+do and what is waiting on him. The written Summary block is still required on that turn; the
+briefing replaces the one-line `say_notify`, it does not stack with it.
+
+**EXPLICIT REQUEST ONLY.** `say_brief` fires because Leo asked for a briefing in that turn.
+NEVER from a Stop or SessionEnd hook, NEVER on agent completion, NEVER as a turn's automatic
+closing notification, and NEVER on a schedule. The attention-event rules above govern
+`say_notify` alone — a briefing is not an attention event, and a hook that speaks one is a
+defect.
+
 ## Voice Rules
 
 | Rule        | Action                                                                                                  |

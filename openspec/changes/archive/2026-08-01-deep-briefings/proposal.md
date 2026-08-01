@@ -44,6 +44,28 @@ hook; Kokoro-FastAPI auto-stitches long input. The binding constraint is the cal
   verbatim, cap the recorded text at ~300 chars with an ellipsis, keeping the spoken text
   full-length).
 
+## Measured timings (task 1.1, 2026-08-01)
+
+Deployed Kokoro (`ghcr.io/remsky/kokoro-fastapi-cpu:v0.6.0`, loopback), voice
+`kokoro:af_heart+af_bella(3)` at speed 0.95. Cold = first synthesis after `docker restart
+kokoro` (healthy after 8s); warm = steady state. `herald notify synth`, wall clock:
+
+| Words | Cold  | Warm  | Audio    |
+| ----- | ----- | ----- | -------- |
+| 60    | 3.54s | 2.45s | 408 KB   |
+| 100   | 5.89s | 5.07s | 629 KB   |
+| 150   | 8.49s | 7.05s | 927 KB   |
+
+No STOP: 150 words cold is 8.5s against the 60s threshold. Delivery is not the constraint
+either — 927 KB transfers to the playback host in 0.11s over the tailnet.
+
+**What this changed in the design.** Synthesis fits inside the pipe's existing 30s bound with
+3.5x headroom, so that bound is left alone and `say_brief` raises only the caller-side one.
+The 15s caller bound was still wrong, but not for the stated reason: 8.5s of synthesis plus a
+sleeping playback host's full 10s delivery timeout is 18.5s, and under 15s `timeout(1)` kills
+the pipe *before* it can append its `transport_timeout` record. The raise to 60s exists to
+keep that failure observable, not to make room for synthesis.
+
 ## Non-goals / out of scope
 
 - No streaming/interruptible playback, no conversation — one-shot digest only.

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # notify.sh — sourceable Herald caller helper shipped by the notify plugin.
-# say_notify is bounded, fire-and-forget, and always returns 0.
+# say_notify is bounded, fire-and-forget, and always returns 0. say_brief is the
+# same call under a bound sized for a long digest — not a second speech path.
 
 (return 0 2>/dev/null) || set -euo pipefail
 
@@ -88,5 +89,29 @@ say_notify() {
       return 0
     }
   fi
+  return 0
+}
+
+# say_brief — one long-form spoken digest, through the same pipe and the same
+# function. The only difference is the caller-side bound.
+#
+# Why 60s rather than say_notify's 15s (measured 2026-08-01, deployed CPU
+# Kokoro, af_heart+af_bella): a 150-word digest synthesizes in 8.5s cold / 7.0s
+# warm and ships ~900KB, which transfers in ~0.1s. Synthesis alone fits inside
+# 15s, but an asleep playback host adds the full 10s delivery timeout on top —
+# 18.5s worst case. Under the 15s bound that overrun is killed by timeout(1)
+# BEFORE bin/notify.sh can append its transport_timeout record, turning a
+# recorded failure into a silent one. 60s leaves the pipe's own bounds (30s
+# synthesis + 10s delivery) as the ones that actually fire, which is what keeps
+# every outcome observable in the history.
+#
+# The subshell is deliberate: a bare `VAR=x say_notify` prefix persists after
+# the call in some shells and not others, and this file is sourced under both
+# bash and zsh. Raised bounds must not leak onto the next say_notify.
+say_brief() {
+  (
+    SAY_NOTIFY_TIMEOUT="${SAY_BRIEF_TIMEOUT:-60}"
+    say_notify "$@"
+  )
   return 0
 }

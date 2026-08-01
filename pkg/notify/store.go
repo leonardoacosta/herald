@@ -34,6 +34,7 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+	"unicode/utf8"
 )
 
 // State file names within the resolved state dir.
@@ -59,6 +60,29 @@ const (
 	OutcomeTransportFailed  = "transport_failed"
 	OutcomeTransportTimeout = "transport_timeout"
 )
+
+// MaxRecordedText caps the text carried in a history record, in runes.
+//
+// The history is a debugging surface, not a transcript. A one-line notify call
+// was always well inside this; an on-demand briefing (60-150 words, ~1KB of
+// prose) is not, and its full body tells an operator nothing its opening
+// sentence does not while making every `notify history` row unreadable.
+// Capping here rather than at the briefing call site means the invariant holds
+// for every writer that reaches the store, present and future.
+//
+// The SPOKEN text is untouched — synthesis has already happened by the time a
+// record is appended, so this only ever shortens the recorded copy.
+const MaxRecordedText = 300
+
+// truncateRecordedText shortens s to MaxRecordedText runes, the last of which
+// is an ellipsis marking the cut. Rune-based rather than byte-based so a cut
+// landing mid-character cannot emit invalid UTF-8 into the NDJSON.
+func truncateRecordedText(s string) string {
+	if utf8.RuneCountInString(s) <= MaxRecordedText {
+		return s
+	}
+	return string([]rune(s)[:MaxRecordedText-1]) + "…"
+}
 
 // ValidOutcome reports whether s is one of the five sanctioned outcomes.
 // AppendRecord rejects anything else rather than writing a row the board
@@ -283,7 +307,8 @@ func writeVoicesAtomic(dir string, v Voices, rename func(string, string) error) 
 // as any append-only operator history.
 //
 // A zero TS is stamped with time.Now().UTC() so no caller can write an
-// undatable row; an unknown outcome is rejected outright.
+// undatable row; an unknown outcome is rejected outright; Text over
+// MaxRecordedText runes is truncated.
 func AppendRecord(dir string, r Record) error {
 	if !ValidOutcome(r.Outcome) {
 		return fmt.Errorf("notify: outcome %q is not one of %s/%s/%s/%s/%s",
@@ -293,6 +318,7 @@ func AppendRecord(dir string, r Record) error {
 	if r.TS.IsZero() {
 		r.TS = time.Now().UTC()
 	}
+	r.Text = truncateRecordedText(r.Text)
 	line, err := json.Marshal(r)
 	if err != nil {
 		return fmt.Errorf("notify: encode record: %w", err)
