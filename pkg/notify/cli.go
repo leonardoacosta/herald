@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -276,6 +277,7 @@ func runSynth(args []string, stdout, stderr io.Writer) int {
 	project := fs.String("project", "", "project code whose configured voice to use")
 	text := fs.String("text", "", "text to speak")
 	out := fs.String("out", "", "file to write the audio bytes to")
+	speedOut := fs.String("speed-out", "", "optional file to write the effective speed")
 	timeout := fs.Float64("timeout", DefaultTimeout.Seconds(), "synthesis timeout in seconds")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -296,6 +298,13 @@ func runSynth(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprintln(stdout, voice.String())
+	if *speedOut != "" {
+		speedText := strconv.FormatFloat(voice.Speed, 'f', -1, 64) + "\n"
+		if err := os.WriteFile(*speedOut, []byte(speedText), 0o600); err != nil {
+			fmt.Fprintf(stderr, "notify synth: write speed metadata %s: %v\n", *speedOut, err)
+			return 1
+		}
+	}
 
 	client, err := NewClient(ResolveBaseURL(), time.Duration(*timeout*float64(time.Second)))
 	if err != nil {
@@ -323,6 +332,7 @@ func runRecord(args []string, stderr io.Writer) int {
 	project := fs.String("project", "", "project code this notification belongs to")
 	text := fs.String("text", "", "the notification text")
 	voice := fs.String("voice", "", "the resolved provider-qualified voice")
+	speed := fs.Float64("speed", 0, "the effective synthesis speed")
 	outcome := fs.String("outcome", "", "one of delivered|synth_failed|transport_failed|transport_timeout")
 	reason := fs.String("reason", "", "failure reason, for any non-delivered outcome")
 	if err := fs.Parse(args); err != nil {
@@ -342,6 +352,7 @@ func runRecord(args []string, stderr io.Writer) int {
 		Project: *project,
 		Text:    *text,
 		Voice:   *voice,
+		Speed:   *speed,
 		Outcome: *outcome,
 		// Reasons arrive as captured stderr, which is often multi-line and
 		// trailing-newline'd. Collapse it: the board renders one row per

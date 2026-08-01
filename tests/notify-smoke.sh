@@ -13,6 +13,9 @@ export HERALD_CONFIG_DIR="$TMP/config"
 export HERALD_STATE_DIR="$TMP/state"
 export HERALD_KOKORO_BASE_URL="http://127.0.0.1:1"
 export HERALD_NOTIFY_SYNTH_TIMEOUT="1"
+mkdir -p "$HERALD_STATE_DIR"
+printf '%s\n' '{"default":{"voice":"kokoro:af_heart","speed":0.9},"projects":{}}' \
+  > "$HERALD_STATE_DIR/voices.json"
 
 set +e
 "$REPO/bin/notify.sh" --project smoke "fail-soft smoke" >/dev/null 2>&1
@@ -22,7 +25,7 @@ set -e
 [ "$rc" -eq 0 ] || { echo "notify pipe returned $rc, want 0" >&2; exit 1; }
 [ -f "$HERALD_STATE_DIR/notify.ndjson" ] || { echo "history was not created" >&2; exit 1; }
 [ "$(wc -l < "$HERALD_STATE_DIR/notify.ndjson")" -eq 1 ] || { echo "history does not contain exactly one attempt" >&2; exit 1; }
-jq -e 'select(.project == "smoke" and .outcome == "synth_failed")' \
+jq -e 'select(.project == "smoke" and .outcome == "synth_failed" and .speed == 0.9)' \
   "$HERALD_STATE_DIR/notify.ndjson" >/dev/null
 
 mkdir -p "$TMP/repo/bin"

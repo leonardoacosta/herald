@@ -22,6 +22,7 @@ func TestSynthesizeSpeaksTheKokoroWireContract(t *testing.T) {
 		gotMethod string
 		gotAuth   string
 		gotType   string
+		gotRaw    string
 		gotBody   speechRequest
 	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -29,6 +30,7 @@ func TestSynthesizeSpeaksTheKokoroWireContract(t *testing.T) {
 		gotAuth = r.Header.Get("Authorization")
 		gotType = r.Header.Get("Content-Type")
 		b, _ := io.ReadAll(r.Body)
+		gotRaw = string(b)
 		_ = json.Unmarshal(b, &gotBody)
 		_, _ = w.Write([]byte("ID3-ish-audio-bytes"))
 	}))
@@ -58,6 +60,10 @@ func TestSynthesizeSpeaksTheKokoroWireContract(t *testing.T) {
 	if gotBody.Model != "kokoro" || gotBody.ResponseFormat != "mp3" || gotBody.Input != "wave one landed" {
 		t.Errorf("body = %+v, want model=kokoro response_format=mp3 with the input text", gotBody)
 	}
+	wantRaw := `{"model":"kokoro","input":"wave one landed","voice":"af_bella","response_format":"mp3"}`
+	if gotRaw != wantRaw {
+		t.Errorf("legacy request body = %s, want byte-compatible %s", gotRaw, wantRaw)
+	}
 	// The provider prefix is a local storage convention — it must never reach
 	// the wire, where kokoro expects a bare voice name.
 	if gotBody.Voice != "af_bella" {
@@ -65,6 +71,39 @@ func TestSynthesizeSpeaksTheKokoroWireContract(t *testing.T) {
 	}
 	if string(audio) != "ID3-ish-audio-bytes" {
 		t.Errorf("audio = %q, want the response body verbatim", audio)
+	}
+}
+
+func TestSynthesizeSerializesConfiguredProsodyAndNormalization(t *testing.T) {
+	var got speechRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		_, _ = w.Write([]byte("audio"))
+	}))
+	defer srv.Close()
+
+	voice := ParseQualified("kokoro:af_heart+af_bella(2)")
+	voice.Speed = 0.95
+	voice.NormalizationOptions = &NormalizationOptions{
+		Normalize:                          true,
+		UnitNormalization:                  true,
+		URLNormalization:                   true,
+		EmailNormalization:                 true,
+		OptionalPluralizationNormalization: true,
+		PhoneNormalization:                 true,
+		ReplaceRemainingSymbols:            true,
+	}
+	client, _ := NewClient(srv.URL, time.Second)
+	if _, err := client.Synthesize(context.Background(), "Ten dollars at example.com", voice); err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	if got.Voice != "af_heart+af_bella(2)" || got.Speed != 0.95 || got.NormalizationOptions == nil {
+		t.Fatalf("configured request = %+v", got)
+	}
+	if !got.NormalizationOptions.UnitNormalization || !got.NormalizationOptions.URLNormalization {
+		t.Fatalf("normalization options = %+v", got.NormalizationOptions)
 	}
 }
 

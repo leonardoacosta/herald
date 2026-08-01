@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -191,5 +192,42 @@ func TestCatalogClientTimeoutRemainsBoundedThroughCLI(t *testing.T) {
 	rc, _, _ := runManagementCLI(t, "catalog", "--timeout", "0.05")
 	if rc == 0 || time.Since(start) > 5*time.Second {
 		t.Fatalf("bounded catalog rc=%d elapsed=%v", rc, time.Since(start))
+	}
+}
+
+func TestSynthAndRecordCLICarryEffectiveSpeedIntoHistory(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv(StateDirEnv, state)
+	if err := os.WriteFile(VoicesPath(state), []byte(`{
+  "default": "kokoro:af_heart",
+  "projects": {"hs": {"voice": "kokoro:af_bella", "speed": 0.95}}
+}
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("audio"))
+	}))
+	defer srv.Close()
+	t.Setenv(BaseURLEnv, srv.URL)
+	audioPath := filepath.Join(t.TempDir(), "audio.mp3")
+	speedPath := filepath.Join(t.TempDir(), "speed")
+
+	rc, stdout, stderr := runManagementCLI(t, "synth", "--project", "hs", "--text", "hello", "--out", audioPath, "--speed-out", speedPath)
+	if rc != 0 || stdout != "kokoro:af_bella\n" || stderr != "" {
+		t.Fatalf("synth rc=%d stdout=%q stderr=%q", rc, stdout, stderr)
+	}
+	speedBytes, err := os.ReadFile(speedPath)
+	if err != nil || string(speedBytes) != "0.95\n" {
+		t.Fatalf("speed metadata = %q err=%v", speedBytes, err)
+	}
+
+	rc, stdout, stderr = runManagementCLI(t, "record", "--project", "hs", "--text", "hello", "--voice", "kokoro:af_bella", "--speed", "0.95", "--outcome", OutcomeDelivered)
+	if rc != 0 || stdout != "" || stderr != "" {
+		t.Fatalf("record rc=%d stdout=%q stderr=%q", rc, stdout, stderr)
+	}
+	history, err := ReadHistory(state)
+	if err != nil || len(history) != 1 || history[0].Voice != "kokoro:af_bella" || history[0].Speed != 0.95 {
+		t.Fatalf("history = %+v err=%v", history, err)
 	}
 }

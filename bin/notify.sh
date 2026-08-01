@@ -93,7 +93,7 @@ record() {
   local outcome="$1" reason="${2:-}"
   "$BIN" notify record \
     --project "$PROJECT" --text "$TEXT" --voice "$VOICE" \
-    --outcome "$outcome" --reason "$reason" 2>/dev/null ||
+    --speed "${SPEED:-0}" --outcome "$outcome" --reason "$reason" 2>/dev/null ||
     warn "could not append the history record ($outcome)"
 }
 
@@ -106,13 +106,16 @@ trap 'rm -f "$AUDIO"' EXIT INT TERM
 # history record can carry the voice that was going to be used); stderr is the
 # reason, which becomes the record's reason verbatim.
 SYNTH_ERR="$(mktemp -t herald-notify-err.XXXXXX)" || { warn "could not create a temp file"; exit 0; }
-trap 'rm -f "$AUDIO" "$SYNTH_ERR"' EXIT INT TERM
+SPEED_META="$(mktemp -t herald-notify-speed.XXXXXX)" || { warn "could not create a temp file"; exit 0; }
+trap 'rm -f "$AUDIO" "$SYNTH_ERR" "$SPEED_META"' EXIT INT TERM
 
 VOICE="$("$BIN" notify synth \
-  --project "$PROJECT" --text "$TEXT" --out "$AUDIO" --timeout "$SYNTH_TIMEOUT" \
+  --project "$PROJECT" --text "$TEXT" --out "$AUDIO" --speed-out "$SPEED_META" --timeout "$SYNTH_TIMEOUT" \
   2>"$SYNTH_ERR")"
 SYNTH_RC=$?
 VOICE="${VOICE:-unknown}"
+SPEED="$(tr -d '[:space:]' < "$SPEED_META" 2>/dev/null || true)"
+SPEED="${SPEED:-0}"
 
 if [ "$SYNTH_RC" -ne 0 ]; then
   REASON="$(tr '\n' ' ' < "$SYNTH_ERR")"
@@ -171,7 +174,7 @@ REMOTE
 if [ "$WAIT" -eq 1 ]; then REMOTE_CMD="$REMOTE_WAIT"; else REMOTE_CMD="$REMOTE_DETACH"; fi
 
 SSH_ERR="$(mktemp -t herald-notify-ssh.XXXXXX)" || { warn "could not create a temp file"; exit 0; }
-trap 'rm -f "$AUDIO" "$SYNTH_ERR" "$SSH_ERR"' EXIT INT TERM
+trap 'rm -f "$AUDIO" "$SYNTH_ERR" "$SPEED_META" "$SSH_ERR"' EXIT INT TERM
 
 timeout "$PLAYBACK_TIMEOUT" \
   ssh -o BatchMode=yes "$PLAYBACK_HOST" "$REMOTE_CMD" \

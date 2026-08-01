@@ -2,16 +2,16 @@
 
 ## 1. Engine parameters
 
-- [ ] 1.1 `pkg/notify/kokoro.go`: add `Speed float64` and
+- [x] 1.1 `pkg/notify/kokoro.go`: add `Speed float64` and
       `NormalizationOptions *NormalizationOptions` to `speechRequest`, both
       `json:",omitempty"`-safe (zero value serializes away). Verify: existing
       `kokoro_test.go` marshalling assertions still pass byte-identical for the
       unconfigured case; new assertions cover the configured case.
-- [ ] 1.2 `pkg/notify/voice.go`: extend voices.json schema with optional per-entry
+- [x] 1.2 `pkg/notify/voice.go`: extend voices.json schema with optional per-entry
       `speed`; resolution carries it (default 0 = engine default). Blend voice values
       pass through with provider prefix stripped. Verify: new `voice_test.go` cases —
       legacy file, speed file, blend value.
-- [ ] 1.3 History records include the effective speed/voice actually sent. Verify:
+- [x] 1.3 History records include the effective speed/voice actually sent. Verify:
       `store_test.go` extended case.
 
 ## 2. Audition + default
@@ -22,11 +22,11 @@
 
 ## 3. Speakable text
 
-- [ ] 3.1 Amend the tts-summary output style: `say_notify` argument = one natural
+- [x] 3.1 Amend the tts-summary output style: `say_notify` argument = one natural
       sentence, jargon expanded; written Summary block rules unchanged; add 3
       before/after examples. Verify: the file's rule table renders and the examples
       contradict no existing row.
-- [ ] 3.2 Sweep cc for hardcoded spoken strings that violate the rule
+- [x] 3.2 Sweep cc for hardcoded spoken strings that violate the rule
       (`grep -rn "say_notify \"" scripts/hooks/ commands/` at cc `c820c42d` — e.g.
       `stop-failure.sh:66`, `telemetry.sh:1801` bodies) and rephrase the templates.
       Verify: grep list reviewed; each remaining literal is a full sentence.

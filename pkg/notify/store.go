@@ -81,6 +81,84 @@ type Voices struct {
 	Default string `json:"default"`
 	// Projects maps a projects.toml project code ("hs", "cc") to its voice.
 	Projects map[string]string `json:"projects"`
+	// Speeds are kept alongside the string fields in Go. Custom JSON methods
+	// preserve legacy scalar entries and emit an object only when speed is set.
+	DefaultSpeed  float64            `json:"-"`
+	ProjectSpeeds map[string]float64 `json:"-"`
+}
+
+type voiceEntryWire struct {
+	Voice string  `json:"voice"`
+	Speed float64 `json:"speed,omitempty"`
+}
+
+type voicesWire struct {
+	Default  json.RawMessage            `json:"default"`
+	Projects map[string]json.RawMessage `json:"projects"`
+}
+
+func decodeVoiceEntry(raw json.RawMessage) (voiceEntryWire, error) {
+	var scalar string
+	if err := json.Unmarshal(raw, &scalar); err == nil {
+		return voiceEntryWire{Voice: scalar}, nil
+	}
+	var entry voiceEntryWire
+	if err := json.Unmarshal(raw, &entry); err != nil {
+		return voiceEntryWire{}, err
+	}
+	return entry, nil
+}
+
+// UnmarshalJSON accepts both the legacy string entry and the speed-aware object
+// form, per default and per project.
+func (v *Voices) UnmarshalJSON(data []byte) error {
+	var wire voicesWire
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	v.Default = ""
+	v.DefaultSpeed = 0
+	v.Projects = map[string]string{}
+	v.ProjectSpeeds = map[string]float64{}
+	if len(wire.Default) > 0 && string(wire.Default) != "null" {
+		entry, err := decodeVoiceEntry(wire.Default)
+		if err != nil {
+			return fmt.Errorf("decode default voice entry: %w", err)
+		}
+		v.Default, v.DefaultSpeed = entry.Voice, entry.Speed
+	}
+	for project, raw := range wire.Projects {
+		entry, err := decodeVoiceEntry(raw)
+		if err != nil {
+			return fmt.Errorf("decode project %q voice entry: %w", project, err)
+		}
+		v.Projects[project] = entry.Voice
+		if entry.Speed != 0 {
+			v.ProjectSpeeds[project] = entry.Speed
+		}
+	}
+	return nil
+}
+
+// MarshalJSON emits the old scalar form when speed is zero and the object form
+// only for configured prosody.
+func (v Voices) MarshalJSON() ([]byte, error) {
+	defaultValue := any(v.Default)
+	if v.DefaultSpeed != 0 {
+		defaultValue = voiceEntryWire{Voice: v.Default, Speed: v.DefaultSpeed}
+	}
+	projects := make(map[string]any, len(v.Projects))
+	for project, voice := range v.Projects {
+		if speed := v.ProjectSpeeds[project]; speed != 0 {
+			projects[project] = voiceEntryWire{Voice: voice, Speed: speed}
+		} else {
+			projects[project] = voice
+		}
+	}
+	return json.Marshal(struct {
+		Default  any            `json:"default"`
+		Projects map[string]any `json:"projects"`
+	}{Default: defaultValue, Projects: projects})
 }
 
 // Record is one line of notify.ndjson: one notify call, delivered or not.
@@ -92,6 +170,7 @@ type Record struct {
 	Project string    `json:"project"`
 	Text    string    `json:"text"`
 	Voice   string    `json:"voice"`
+	Speed   float64   `json:"speed,omitempty"`
 	Outcome string    `json:"outcome"`
 	Reason  string    `json:"reason,omitempty"`
 }

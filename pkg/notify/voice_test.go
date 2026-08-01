@@ -170,6 +170,86 @@ func TestReadVoicesMalformedIsAnError(t *testing.T) {
 	}
 }
 
+func TestReadVoicesSupportsSpeedEntriesAndBlend(t *testing.T) {
+	dir := t.TempDir()
+	raw := `{
+  "default": {"voice": "kokoro:af_heart", "speed": 0.9},
+  "projects": {
+    "hs": {"voice": "kokoro:af_heart+af_bella(2)", "speed": 0.95},
+    "cc": "legacy-id"
+  }
+}
+`
+	if err := os.WriteFile(VoicesPath(dir), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	voices, err := ReadVoices(dir)
+	if err != nil {
+		t.Fatalf("ReadVoices: %v", err)
+	}
+	project := voices.Resolve("hs")
+	if project.String() != "kokoro:af_heart+af_bella(2)" || project.Speed != 0.95 {
+		t.Fatalf("project resolution = %+v, want blend at 0.95", project)
+	}
+	fallback := voices.Resolve("unknown")
+	if fallback.String() != DefaultVoice || fallback.Speed != 0.9 {
+		t.Fatalf("default resolution = %+v, want af_heart at 0.9", fallback)
+	}
+	legacy := voices.Resolve("cc")
+	if legacy.Provider != ProviderLegacy || legacy.Speed != 0 {
+		t.Fatalf("legacy resolution = %+v, want unchanged zero-speed legacy voice", legacy)
+	}
+	effective := voices.Effective("hs")
+	if effective.Speed != 0.95 {
+		t.Fatalf("effective read model = %+v, want speed 0.95", effective)
+	}
+}
+
+func TestLegacyVoicesJSONRemainsScalarAndZeroSpeed(t *testing.T) {
+	dir := t.TempDir()
+	raw := "{\n  \"default\": \"kokoro:af_heart\",\n  \"projects\": {\n    \"hs\": \"kokoro:af_bella\"\n  }\n}\n"
+	if err := os.WriteFile(VoicesPath(dir), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	voices, err := ReadVoices(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := voices.Resolve("hs"); got.String() != "kokoro:af_bella" || got.Speed != 0 {
+		t.Fatalf("legacy project resolution = %+v", got)
+	}
+	if err := WriteVoices(dir, voices); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(VoicesPath(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != raw {
+		t.Fatalf("legacy JSON changed shape:\n%s", after)
+	}
+}
+
+func TestSetProjectVoicePersistsSpeed(t *testing.T) {
+	dir := t.TempDir()
+	voices := DefaultVoices()
+	voice := ParseQualified("kokoro:af_bella")
+	voice.Speed = 0.9
+	if err := voices.SetProjectVoice("hs", voice); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteVoices(dir, voices); err != nil {
+		t.Fatal(err)
+	}
+	reread, err := ReadVoices(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := reread.Resolve("hs"); got.String() != "kokoro:af_bella" || got.Speed != 0.9 {
+		t.Fatalf("persisted voice = %+v, want speed 0.9", got)
+	}
+}
+
 func TestWriteReadVoicesRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	want := Voices{Default: "kokoro:af_heart", Projects: map[string]string{"hs": "kokoro:af_bella"}}

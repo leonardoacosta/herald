@@ -16,6 +16,7 @@ func TestAppendRecordRoundTrip(t *testing.T) {
 		Project: "hs",
 		Text:    "wave 1 landed",
 		Voice:   "kokoro:af_bella",
+		Speed:   0.95,
 		Outcome: OutcomeDelivered,
 	}
 	if err := AppendRecord(dir, rec); err != nil {
@@ -30,7 +31,7 @@ func TestAppendRecordRoundTrip(t *testing.T) {
 		t.Fatalf("got %d records, want 1", len(got))
 	}
 	if !got[0].TS.Equal(ts) || got[0].Project != "hs" || got[0].Text != "wave 1 landed" ||
-		got[0].Voice != "kokoro:af_bella" || got[0].Outcome != OutcomeDelivered {
+		got[0].Voice != "kokoro:af_bella" || got[0].Speed != 0.95 || got[0].Outcome != OutcomeDelivered {
 		t.Errorf("record did not round-trip: %+v", got[0])
 	}
 	if got[0].Reason != "" {

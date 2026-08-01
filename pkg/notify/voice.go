@@ -27,8 +27,10 @@ const DefaultVoice = ProviderKokoro + ":af_heart"
 
 // Voice is a parsed provider-qualified voice.
 type Voice struct {
-	Provider string
-	Voice    string
+	Provider             string
+	Voice                string
+	Speed                float64
+	NormalizationOptions *NormalizationOptions
 }
 
 // VoiceSource identifies which configuration layer supplied an effective
@@ -47,6 +49,7 @@ type EffectiveVoice struct {
 	Stored    string      `json:"stored"`
 	Effective string      `json:"effective"`
 	Source    VoiceSource `json:"source"`
+	Speed     float64     `json:"speed,omitempty"`
 }
 
 // String re-renders the qualified form, so a resolved Voice can be written
@@ -60,12 +63,13 @@ func (v Voices) Effective(project string) EffectiveVoice {
 		return EffectiveVoice{
 			Project: project, Stored: id,
 			Effective: ParseQualified(id).String(), Source: VoiceSourceProject,
+			Speed: v.ProjectSpeeds[project],
 		}
 	}
 	if strings.TrimSpace(v.Default) != "" {
 		return EffectiveVoice{
 			Project: project, Effective: ParseQualified(v.Default).String(),
-			Source: VoiceSourceDefault,
+			Source: VoiceSourceDefault, Speed: v.DefaultSpeed,
 		}
 	}
 	return EffectiveVoice{
@@ -77,7 +81,7 @@ func (v Voices) Effective(project string) EffectiveVoice {
 // exist. Resolve still supplies DefaultVoice; keeping Default empty preserves
 // the distinction between a configured default and the built-in fallback.
 func DefaultVoices() Voices {
-	return Voices{Projects: map[string]string{}}
+	return Voices{Projects: map[string]string{}, ProjectSpeeds: map[string]float64{}}
 }
 
 // ParseQualified splits a voices.json value into provider and voice.
@@ -114,11 +118,15 @@ func ParseQualified(id string) Voice {
 func (v Voices) Resolve(project string) Voice {
 	if project != "" {
 		if id, ok := v.Projects[project]; ok && strings.TrimSpace(id) != "" {
-			return ParseQualified(id)
+			voice := ParseQualified(id)
+			voice.Speed = v.ProjectSpeeds[project]
+			return voice
 		}
 	}
 	if strings.TrimSpace(v.Default) != "" {
-		return ParseQualified(v.Default)
+		voice := ParseQualified(v.Default)
+		voice.Speed = v.DefaultSpeed
+		return voice
 	}
 	return ParseQualified(DefaultVoice)
 }
@@ -136,7 +144,15 @@ func (v *Voices) SetProjectVoice(project string, voice Voice) error {
 	if v.Projects == nil {
 		v.Projects = map[string]string{}
 	}
+	if v.ProjectSpeeds == nil {
+		v.ProjectSpeeds = map[string]float64{}
+	}
 	v.Projects[project] = voice.String()
+	if voice.Speed == 0 {
+		delete(v.ProjectSpeeds, project)
+	} else {
+		v.ProjectSpeeds[project] = voice.Speed
+	}
 	return nil
 }
 
@@ -148,6 +164,7 @@ func (v *Voices) RemoveProjectVoice(project string) error {
 		return fmt.Errorf("notify: project code is required")
 	}
 	delete(v.Projects, project)
+	delete(v.ProjectSpeeds, project)
 	return nil
 }
 

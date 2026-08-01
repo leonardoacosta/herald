@@ -88,6 +88,19 @@ type catalogResponse struct {
 	Voices []CatalogVoice `json:"voices"`
 }
 
+// NormalizationOptions mirrors Kokoro-FastAPI's optional normalization object.
+// The containing pointer is nil for legacy requests, preserving their exact
+// wire shape.
+type NormalizationOptions struct {
+	Normalize                          bool `json:"normalize"`
+	UnitNormalization                  bool `json:"unit_normalization"`
+	URLNormalization                   bool `json:"url_normalization"`
+	EmailNormalization                 bool `json:"email_normalization"`
+	OptionalPluralizationNormalization bool `json:"optional_pluralization_normalization"`
+	PhoneNormalization                 bool `json:"phone_normalization"`
+	ReplaceRemainingSymbols            bool `json:"replace_remaining_symbols"`
+}
+
 // NewClient builds a client bound to baseURL with a bounded timeout.
 //
 // The timeout lands on the http.Client rather than only on a per-call context
@@ -180,10 +193,12 @@ func (c *Client) Audition(ctx context.Context, voice Voice) error {
 
 // speechRequest is the POST body. Field names are the wire's, not ours.
 type speechRequest struct {
-	Model          string `json:"model"`
-	Input          string `json:"input"`
-	Voice          string `json:"voice"`
-	ResponseFormat string `json:"response_format"`
+	Model                string                `json:"model"`
+	Input                string                `json:"input"`
+	Voice                string                `json:"voice"`
+	ResponseFormat       string                `json:"response_format"`
+	Speed                float64               `json:"speed,omitempty"`
+	NormalizationOptions *NormalizationOptions `json:"normalization_options,omitempty"`
 }
 
 // Synthesize returns the audio bytes for text spoken in v.
@@ -208,10 +223,12 @@ func (c *Client) Synthesize(ctx context.Context, text string, v Voice) ([]byte, 
 	}
 
 	body, err := json.Marshal(speechRequest{
-		Model:          speechModel,
-		Input:          text,
-		Voice:          v.Voice,
-		ResponseFormat: speechFormat,
+		Model:                speechModel,
+		Input:                text,
+		Voice:                v.Voice,
+		ResponseFormat:       speechFormat,
+		Speed:                v.Speed,
+		NormalizationOptions: v.NormalizationOptions,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("notify: encode speech request: %w", err)
