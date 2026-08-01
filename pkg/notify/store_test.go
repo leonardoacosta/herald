@@ -110,7 +110,7 @@ func TestAppendRecordRejectsUnknownOutcome(t *testing.T) {
 }
 
 func TestValidOutcomeCoversTheClosedSet(t *testing.T) {
-	for _, o := range []string{OutcomeDelivered, OutcomeSynthFailed, OutcomeTransportFailed, OutcomeTransportTimeout} {
+	for _, o := range []string{OutcomeDelivered, OutcomeMuted, OutcomeSynthFailed, OutcomeTransportFailed, OutcomeTransportTimeout} {
 		if !ValidOutcome(o) {
 			t.Errorf("ValidOutcome(%q) = false, want true", o)
 		}
@@ -119,6 +119,21 @@ func TestValidOutcomeCoversTheClosedSet(t *testing.T) {
 		if ValidOutcome(o) {
 			t.Errorf("ValidOutcome(%q) = true, want false", o)
 		}
+	}
+}
+
+func TestMutedRecordAppendsAsAClosedOutcome(t *testing.T) {
+	dir := t.TempDir()
+	if err := AppendRecord(dir, Record{
+		Text:    "silenced by operator",
+		Voice:   DefaultVoice,
+		Outcome: OutcomeMuted,
+	}); err != nil {
+		t.Fatalf("AppendRecord(muted): %v", err)
+	}
+	got, err := ReadHistory(dir)
+	if err != nil || len(got) != 1 || got[0].Outcome != OutcomeMuted {
+		t.Fatalf("history = %+v err=%v, want one muted record", got, err)
 	}
 }
 

@@ -25,7 +25,7 @@ copy of any of these; consumers reach the pipe exclusively through `$HERALD/bin/
 
 Every herald entry point SHALL exit 0 on every failure path, bound its wall clock, and
 append exactly one history record per attempt (`delivered`, `synth_failed`,
-`transport_timeout`, `transport_failed`).
+`transport_timeout`, `transport_failed`, `muted`).
 
 #### Scenario: Synthesis service down
 
@@ -36,6 +36,11 @@ append exactly one history record per attempt (`delivered`, `synth_failed`,
 
 - **WHEN** ssh to the playback host exceeds the playback timeout
 - **THEN** the pipe exits 0 and a `transport_timeout` record names the host and bound
+
+#### Scenario: Operator mute is active
+
+- **WHEN** the shared Herald mute file contains a future epoch expiry
+- **THEN** the pipe exits 0 before synthesis or transport and appends one `muted` record
 
 ### Requirement: Voice state is manageable through safe herald CLI seams
 

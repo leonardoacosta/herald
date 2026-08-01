@@ -54,17 +54,18 @@ const (
 // that is the state worth seeing on the board.
 const (
 	OutcomeDelivered        = "delivered"
+	OutcomeMuted            = "muted"
 	OutcomeSynthFailed      = "synth_failed"
 	OutcomeTransportFailed  = "transport_failed"
 	OutcomeTransportTimeout = "transport_timeout"
 )
 
-// ValidOutcome reports whether s is one of the four sanctioned outcomes.
+// ValidOutcome reports whether s is one of the five sanctioned outcomes.
 // AppendRecord rejects anything else rather than writing a row the board
 // cannot render.
 func ValidOutcome(s string) bool {
 	switch s {
-	case OutcomeDelivered, OutcomeSynthFailed, OutcomeTransportFailed, OutcomeTransportTimeout:
+	case OutcomeDelivered, OutcomeMuted, OutcomeSynthFailed, OutcomeTransportFailed, OutcomeTransportTimeout:
 		return true
 	}
 	return false
@@ -285,8 +286,8 @@ func writeVoicesAtomic(dir string, v Voices, rename func(string, string) error) 
 // undatable row; an unknown outcome is rejected outright.
 func AppendRecord(dir string, r Record) error {
 	if !ValidOutcome(r.Outcome) {
-		return fmt.Errorf("notify: outcome %q is not one of %s/%s/%s/%s",
-			r.Outcome, OutcomeDelivered, OutcomeSynthFailed,
+		return fmt.Errorf("notify: outcome %q is not one of %s/%s/%s/%s/%s",
+			r.Outcome, OutcomeDelivered, OutcomeMuted, OutcomeSynthFailed,
 			OutcomeTransportFailed, OutcomeTransportTimeout)
 	}
 	if r.TS.IsZero() {

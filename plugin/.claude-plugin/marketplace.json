@@ -1,0 +1,20 @@
+{
+  "name": "herald",
+  "metadata": {
+    "description": "First-party Herald attention-channel plugin for Claude Code."
+  },
+  "owner": {
+    "name": "Leonardo Acosta"
+  },
+  "plugins": [
+    {
+      "name": "notify",
+      "source": "./",
+      "description": "Speech notifications, shared mute state, history, and operator control.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Leonardo Acosta"
+      }
+    }
+  ]
+}

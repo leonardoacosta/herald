@@ -265,3 +265,28 @@ func TestSynthAndRecordCLICarryEffectiveSpeedIntoHistory(t *testing.T) {
 		t.Fatalf("history = %+v err=%v", history, err)
 	}
 }
+
+func TestRecordCLIMutedResolvesEffectiveVoiceWhenOmitted(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv(StateDirEnv, state)
+	if err := os.WriteFile(VoicesPath(state), []byte(`{
+  "default": {"voice": "kokoro:af_heart+af_bella(3)", "speed": 0.95},
+  "projects": {}
+}
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	rc, stdout, stderr := runManagementCLI(t,
+		"record", "--text", "muted", "--outcome", OutcomeMuted)
+	if rc != 0 || stdout != "" || stderr != "" {
+		t.Fatalf("record rc=%d stdout=%q stderr=%q", rc, stdout, stderr)
+	}
+	history, err := ReadHistory(state)
+	if err != nil || len(history) != 1 {
+		t.Fatalf("history = %+v err=%v", history, err)
+	}
+	if history[0].Voice != "kokoro:af_heart+af_bella(3)" || history[0].Speed != 0.95 {
+		t.Fatalf("muted history did not resolve effective voice: %+v", history[0])
+	}
+}

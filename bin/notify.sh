@@ -91,11 +91,30 @@ BIN="$(herald_bin)" || {
 
 record() {
   local outcome="$1" reason="${2:-}"
-  "$BIN" notify record \
-    --project "$PROJECT" --text "$TEXT" --voice "$VOICE" \
-    --speed "${SPEED:-0}" --outcome "$outcome" --reason "$reason" 2>/dev/null ||
+  local -a record_args=(notify record --project "$PROJECT" --text "$TEXT" --outcome "$outcome" --reason "$reason")
+  if [ -n "${VOICE:-}" ]; then
+    record_args+=(--voice "$VOICE" --speed "${SPEED:-0}")
+  fi
+  "$BIN" "${record_args[@]}" 2>/dev/null ||
     warn "could not append the history record ($outcome)"
 }
+
+# Mute is shared Herald state, so every harness and caller observes the same
+# decision. The file contains an epoch-second expiry. Invalid and expired files
+# are stale state: clean them and continue through the normal speech path.
+MUTE_FILE="$(herald_state_dir)/mute"
+if [ -f "$MUTE_FILE" ]; then
+  IFS= read -r MUTE_UNTIL < "$MUTE_FILE" || true
+  case "${MUTE_UNTIL:-}" in
+    ''|*[!0-9]*) MUTE_UNTIL=0 ;;
+  esac
+  NOW="$(date +%s 2>/dev/null || printf '0')"
+  if [ "$MUTE_UNTIL" -gt "$NOW" ] 2>/dev/null; then
+    record muted "muted until epoch $MUTE_UNTIL"
+    exit 0
+  fi
+  rm -f -- "$MUTE_FILE" 2>/dev/null || true
+fi
 
 # Local audio scratch. Guarded the same way the remote copy is: a caller killed
 # mid-flight must not leave notification audio behind.

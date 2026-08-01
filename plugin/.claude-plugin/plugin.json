@@ -1,0 +1,14 @@
+{
+  "name": "notify",
+  "version": "0.1.0",
+  "description": "Herald speech notifications, shared mute state, history, and operator control for Claude Code.",
+  "author": {
+    "name": "Leonardo Acosta"
+  },
+  "keywords": [
+    "herald",
+    "notifications",
+    "speech",
+    "claude-code"
+  ]
+}

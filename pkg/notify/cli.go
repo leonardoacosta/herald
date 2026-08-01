@@ -352,9 +352,9 @@ func runRecord(args []string, stderr io.Writer) int {
 	fs := flagsOf("notify record", stderr)
 	project := fs.String("project", "", "project code this notification belongs to")
 	text := fs.String("text", "", "the notification text")
-	voice := fs.String("voice", "", "the resolved provider-qualified voice")
+	voice := fs.String("voice", "", "the resolved provider-qualified voice (resolved from project when omitted)")
 	speed := fs.Float64("speed", 0, "the effective synthesis speed")
-	outcome := fs.String("outcome", "", "one of delivered|synth_failed|transport_failed|transport_timeout")
+	outcome := fs.String("outcome", "", "one of delivered|muted|synth_failed|transport_failed|transport_timeout")
 	reason := fs.String("reason", "", "failure reason, for any non-delivered outcome")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -364,16 +364,28 @@ func runRecord(args []string, stderr io.Writer) int {
 	// here first lets the message name the caller's mistake instead of
 	// surfacing a store-layer error.
 	if !ValidOutcome(*outcome) {
-		fmt.Fprintf(stderr, "notify record: --outcome %q is not one of %s|%s|%s|%s\n",
-			*outcome, OutcomeDelivered, OutcomeSynthFailed, OutcomeTransportFailed, OutcomeTransportTimeout)
+		fmt.Fprintf(stderr, "notify record: --outcome %q is not one of %s|%s|%s|%s|%s\n",
+			*outcome, OutcomeDelivered, OutcomeMuted, OutcomeSynthFailed, OutcomeTransportFailed, OutcomeTransportTimeout)
 		return 1
+	}
+
+	resolvedVoice, resolvedSpeed := *voice, *speed
+	if strings.TrimSpace(resolvedVoice) == "" {
+		// A muted attempt never synthesizes, but its history should still carry
+		// the voice it would have used. If configuration is unreadable, retain
+		// the stronger one-attempt/one-record invariant with an explicit marker.
+		if effective, err := ResolveVoice(ResolveStateDir(), *project); err == nil {
+			resolvedVoice, resolvedSpeed = effective.String(), effective.Speed
+		} else {
+			resolvedVoice = "unknown"
+		}
 	}
 
 	err := AppendRecord(ResolveStateDir(), Record{
 		Project: *project,
 		Text:    *text,
-		Voice:   *voice,
-		Speed:   *speed,
+		Voice:   resolvedVoice,
+		Speed:   resolvedSpeed,
 		Outcome: *outcome,
 		// Reasons arrive as captured stderr, which is often multi-line and
 		// trailing-newline'd. Collapse it: the board renders one row per

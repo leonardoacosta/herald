@@ -17,6 +17,14 @@ mkdir -p "$HERALD_STATE_DIR"
 printf '%s\n' '{"default":{"voice":"kokoro:af_heart","speed":0.9},"projects":{}}' \
   > "$HERALD_STATE_DIR/voices.json"
 
+printf '%s\n' "$(( $(date +%s) + 3600 ))" > "$HERALD_STATE_DIR/mute"
+"$REPO/bin/notify.sh" --project smoke "muted smoke" >/dev/null 2>&1
+[ "$(wc -l < "$HERALD_STATE_DIR/notify.ndjson")" -eq 1 ] || { echo "muted attempt was not recorded exactly once" >&2; exit 1; }
+jq -e 'select(.project == "smoke" and .outcome == "muted" and .voice == "kokoro:af_heart" and .speed == 0.9)' \
+  "$HERALD_STATE_DIR/notify.ndjson" >/dev/null
+
+printf '%s\n' "$(( $(date +%s) - 1 ))" > "$HERALD_STATE_DIR/mute"
+
 set +e
 "$REPO/bin/notify.sh" --project smoke "fail-soft smoke" >/dev/null 2>&1
 rc=$?
@@ -24,9 +32,10 @@ set -e
 
 [ "$rc" -eq 0 ] || { echo "notify pipe returned $rc, want 0" >&2; exit 1; }
 [ -f "$HERALD_STATE_DIR/notify.ndjson" ] || { echo "history was not created" >&2; exit 1; }
-[ "$(wc -l < "$HERALD_STATE_DIR/notify.ndjson")" -eq 1 ] || { echo "history does not contain exactly one attempt" >&2; exit 1; }
-jq -e 'select(.project == "smoke" and .outcome == "synth_failed" and .speed == 0.9)' \
-  "$HERALD_STATE_DIR/notify.ndjson" >/dev/null
+[ ! -e "$HERALD_STATE_DIR/mute" ] || { echo "expired mute file was not removed" >&2; exit 1; }
+[ "$(wc -l < "$HERALD_STATE_DIR/notify.ndjson")" -eq 2 ] || { echo "history does not contain exactly two attempts" >&2; exit 1; }
+tail -n 1 "$HERALD_STATE_DIR/notify.ndjson" | jq -e \
+  'select(.project == "smoke" and .outcome == "synth_failed" and .speed == 0.9)' >/dev/null
 
 mkdir -p "$TMP/repo/bin"
 cp "$REPO/bin/notify.sh" "$REPO/bin/lib.sh" "$TMP/repo/bin/"
