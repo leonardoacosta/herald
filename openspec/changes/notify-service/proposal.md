@@ -59,10 +59,22 @@ existing CLI/pipe kept as its fallback transport.
 - **`herald notify serve`** — an HTTP listener bound to loopback **and** the Tailscale
   address, never `0.0.0.0`, mirroring the posture `compose/kokoro.yml` already documents for
   Kokoro. The bind address is the access control; there is no credential (see `## Decisions`).
-- **Send**: `POST /notify {text, project}` becomes the primary path. The service resolves the
-  voice, checks mute, synthesizes, delivers, and appends exactly one history record — the same
-  sequence `bin/notify.sh` performs today, executed in one resident process instead of three
-  execs.
+- **Send**: `POST /notify {text, project}` becomes the primary path, and it **accepts rather
+  than completes**. The service validates, checks mute, enqueues, and returns `202` in
+  milliseconds; synthesis and delivery run asynchronously, and the history record remains the
+  observability surface exactly as `AGENTS.md` already specifies.
+
+  This is not a style preference — a synchronous endpoint is unshippable here. Synthesis is
+  2.5-8.5s measured, and `say_notify`'s caller bound is 15s. A slow or cold synthesis times the
+  client out AFTER the service has already delivered, the client falls through to the local
+  path, and the notification is spoken twice. Returning early collapses the client's exposure
+  window to a connection attempt, so the fallback fires only on genuine unreachability — which
+  is the only condition under which it is safe to fire at all.
+
+- **`--wait` stays local.** It blocks through playback for evidence capture (`/notify test`),
+  which an accept-and-queue endpoint cannot express. A `--wait` call bypasses the service and
+  runs the local path directly. This is a deliberate carve-out, not an oversight: the one caller
+  that wants to block is the one caller that does not want a queue.
 - **Control**: `POST /mute`, `POST /unmute`, `GET /status`, `GET /history?n=` — the surface
   that exists only as markdown today.
 - **Logic consolidation, first**: mute (duration parsing, expiry, atomic replace), status, and
@@ -140,6 +152,10 @@ healthy.
 - **Fallback** — `tests/notify-service.test.sh`: with the service down, `bin/notify.sh` still
   delivers and still records; with it up, the same call routes through the service. Asserts
   both paths never double-send. Task 2.2.
+- **No double-send on slow synthesis** — the specific race that shaped the design: with the
+  service reachable but synthesis artificially slowed past the caller's bound, exactly one
+  history record appears. This fails against a synchronous endpoint, which is the point.
+  Task 2.2.
 - **Bind posture** — assert the listener is reachable on loopback and the tailnet address and
   NOT on a third interface. Task 2.3.
 - **Cross-host** — a real `curl` from the Mac over the tailnet produces audible speech and one
@@ -150,6 +166,22 @@ healthy.
 - Transport — chosen: HTTP bound to loopback + the Tailscale address, mirroring
   `compose/kokoro.yml`; rejected: unix-domain socket (callers are cross-host, confirmed pi does
   not run on the herald box), rejected: staying an ephemeral CLI; decided-by: leo
+- Request semantics — chosen: `POST /notify` accepts and queues, returning `202` immediately
+  with synthesis and delivery async; rejected: a synchronous endpoint (2.5-8.5s synthesis
+  against a 15s caller bound means a timeout after successful delivery, and the fallback then
+  double-sends), rejected: synchronous plus client-supplied idempotency keys (dedup state to
+  own, for a response nobody needs); decided-by: leo
+- Send-path implementation — chosen: port the delivery leg into `pkg/notify` so the service
+  owns synthesis and transport natively; rejected: the service exec'ing `bin/notify.sh` per
+  request; decided-by: leo. **Recorded tradeoff**: the rejected option was smaller and reused
+  delivery code that four documented constraints were paid for in incidents (the `timeout(1)`
+  wrapper, the ban on `ssh -n`, rename-after-complete into the spool, and the trap window). The
+  port MUST carry all four across, with the shell version's comment block as the spec. Scope is
+  narrower than it first appears: voice resolution, synthesis, and history are already Go — only
+  the ssh delivery and spool enqueue are shell-only.
+- `--wait` — chosen: bypasses the service and runs the local path; rejected: a `?wait=true`
+  synchronous mode (reintroduces exactly the timeout window `202` exists to close);
+  decided-by: default
 - Service scope — chosen: send AND control, so `POST /notify` is the primary path and pi needs
   no file-format knowledge; rejected: control-only (leaves pi shelling out for the thing it
   actually wants), rejected: send-only (leaves the ownerless mute format in place);

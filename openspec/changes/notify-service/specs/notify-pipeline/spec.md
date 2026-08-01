@@ -12,11 +12,21 @@ The listener SHALL bind to loopback and the host's tailnet address only, never t
 broadcast address. The bind address IS the access control; no credential is required, matching
 the posture the Kokoro compose module already documents.
 
+A send request SHALL be ACCEPTED rather than completed: the service returns once the request is
+queued, and synthesis and delivery proceed asynchronously. The history record, not the response,
+reports the outcome.
+
 #### Scenario: A foreign caller sends a notification
 
 - **WHEN** a caller on another tailnet host issues one HTTP request carrying text and a project
 - **THEN** speech is delivered and exactly one history record is appended, with the caller
   having read or written no Herald state file
+
+#### Scenario: Acceptance does not wait for synthesis
+
+- **WHEN** a send request is issued while synthesis is slow
+- **THEN** the caller receives its acceptance response without waiting for synthesis, and one
+  history record still reports the eventual outcome
 
 #### Scenario: The listener is not broadly exposed
 
@@ -47,6 +57,13 @@ Exactly one path SHALL deliver any given notification.
 - **WHEN** notifications are sent while the service is starting or stopping
 - **THEN** each notification is delivered exactly once — never once by the service and again by
   the fallback
+
+#### Scenario: A slow service is not a failed service
+
+- **WHEN** the service accepts a request and synthesis then takes longer than the caller's own
+  timeout
+- **THEN** the caller does NOT fall back, because a response already acknowledged acceptance —
+  the notification is spoken once, not twice
 
 ### Requirement: Notification state has exactly one owner
 
