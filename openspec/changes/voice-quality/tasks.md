@@ -33,5 +33,5 @@
 
 ## 4. Evidence
 
-- [ ] 4.1 A/B recording: same text, old vs new config, both history records cited in
+- [x] 4.1 A/B recording: same text, old vs new config, both history records cited in
       the PR. Leo confirms the new default is audibly better before archive.
