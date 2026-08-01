@@ -42,7 +42,7 @@ stack: infra
       local path. Verify: shell test asserts delivery with the service up, with it down, and
       exactly one history record in both cases.
   - depends on: 1.5
-- [ ] 1.8 Rewrite `plugin/commands/notify.md`'s `status`, `history`, `mute`, `unmute` branches
+- [x] 1.8 Rewrite `plugin/commands/notify.md`'s `status`, `history`, `mute`, `unmute` branches
       as thin callers of the binary, matching how `voices` already delegates. Verify: no
       duration arithmetic or epoch math remains in the markdown (`grep` for `multiplier` and
       `date +%s` is empty).
