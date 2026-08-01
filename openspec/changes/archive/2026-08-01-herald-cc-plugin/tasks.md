@@ -44,7 +44,7 @@
       `skills/orchestrator-patterns/scripts/orchestrator-helpers.sh:339-344`) to a bare
       `say_notify "$message"` — no re-source, no backgrounding. Verify:
       `grep -n "source.*notify" orchestrator-helpers.sh` empty.
-- [ ] 4.3 Update cc `skills/deploy-and-env/references/notifications.md` to the plugin
+- [x] 4.3 Update cc `skills/deploy-and-env/references/notifications.md` to the plugin
       architecture (v5) and delete the moved cc files. Verify: cc `validate-cc` passes.
 
 ## 5. Evidence
