@@ -24,6 +24,14 @@ attention (speech, mobile push, history, control surface), it does not belong he
   for retired transports.
 - **Briefings are explicit-only.** `say_brief` fires because the operator asked for a
   briefing. Never from a hook, an agent completion, a session-exit event, or a schedule.
+- **The playback host stays warm.** A resident player (`bin/herald-player.sh`, installed by
+  `bin/player-sync.sh` under a launchd agent) holds an open output stream and plays silence
+  between clips, because the audio device powers down when idle and waking it costs ~420ms —
+  measured 506-559ms per clip cold against 82-96ms warm. It releases the device after an idle
+  window and reacquires on the next clip. **Delivery never depends on it**: it holds the spool
+  lock for its lifetime so the fallback drainer cannot play alongside it, and if it dies the
+  lock goes stale and the next notification plays the old way. A latency optimisation that can
+  silence a notification is not one.
 - **One voice at a time.** The playback host plays at most one clip at any moment.
   Concurrent notifications are spooled and drained in arrival order by a single
   mkdir-elected drainer — never mixed, never dropped. Concurrency is the normal case here

@@ -236,6 +236,17 @@ clip="$SPOOL/clip.${tmp##*.}"
 mv "$tmp" "$clip" || exit 1
 trap - EXIT INT TERM
 
+# Nudge a resident player, if one is running. This is the only thing delivery
+# knows about it: a byte on a fifo, replacing a poll that measured ~500ms of
+# coalesced sleep before the clip was noticed. Guarded on a live pidfile because
+# ONLY the resident player publishes one — the fallback drainer must never be
+# written to, and a write to a fifo whose reader has died would block. The
+# background-and-forget keeps even that impossible case off the caller's clock.
+player_pid=$(cat "$SPOOL/.player.pid" 2>/dev/null)
+if [ -n "$player_pid" ] && kill -0 "$player_pid" 2>/dev/null && [ -p "$SPOOL/.wake" ]; then
+  { printf 'x' > "$SPOOL/.wake" 2>/dev/null & } 2>/dev/null
+fi
+
 nohup sh -c '
 SPOOL=/tmp/herald-spool
 LOCK="$SPOOL/drainer.lock"

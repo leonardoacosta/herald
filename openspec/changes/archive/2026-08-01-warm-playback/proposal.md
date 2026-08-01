@@ -50,6 +50,37 @@ existing spool:
   falls back to the current drainer. A notification MUST NOT depend on a daemon being
   healthy. This is the whole reason the spool stays the interface.
 
+## Measured (2026-08-01)
+
+Against 1824ms of audio on the playback host:
+
+| Playback path | overhead per clip |
+| --- | --- |
+| `afplay` per clip (before this change) | 847-1309ms |
+| a process merely HOLDING the device open, still `afplay` per clip | 838-860ms |
+| resident decoder, device allowed to idle between clips | 506-559ms |
+| **resident decoder, stream kept active with silence** | **82-96ms** |
+
+End to end through the real spool, warm: 89-119ms. The first clip after a cold start still
+pays ~850ms to wake the device, which no amount of software removes.
+
+**Two corrections to this proposal's own premise, both load-bearing.**
+
+First, the 33-44ms figure that originally justified building this was wrong. It came from a
+harness that detected completion by grepping a file truncated with `: > $OUT`; mpg123 held that
+file open at its own write offset, so stale `@P 0` lines from the previous run matched
+instantly. The same bug was later found and fixed inside the player. Any measurement here that
+truncates a file a live writer holds open is measuring nothing.
+
+Second, "the cost is CoreAudio opening the output device" was only half right, and the useful
+half was the opposite of what it implied. Merely holding the device open with a second process
+bought ~450ms of ~1300ms and missed the bar. What clears it is keeping the STREAM ACTIVE —
+playing silence between clips — because the device powers down when nothing is being written to
+it. That single fact is worth more than every other optimisation in this change combined:
+`--devbuffer 0.1` (mpg123's default device buffer costs ~500ms of fill), blocking reads instead
+of polled ones, and a wake fifo replacing a coalesced `sleep` were each measured and each
+mattered far less.
+
 ## Non-goals / out of scope
 
 - No change to synthesis, voice resolution, history, or the outcome set.
