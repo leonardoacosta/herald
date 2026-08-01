@@ -19,6 +19,11 @@ any retired transport.
 - **WHEN** `/notify mute 1h` is set and any harness caller fires `say_notify`
 - **THEN** nothing is spoken and the attempt is recorded with outcome `muted`
 
+#### Scenario: Muted is a closed history outcome
+
+- **WHEN** an active mute suppresses a valid notification attempt
+- **THEN** Herald appends exactly one `muted` record without synthesizing or transporting audio
+
 #### Scenario: Round-trip test produces evidence
 
 - **WHEN** `/notify test` runs

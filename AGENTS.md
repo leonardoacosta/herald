@@ -15,7 +15,7 @@ attention (speech, mobile push, history, control surface), it does not belong he
   into Go or committed compose output.
 - **Never reproduce secret values** in code, docs, or history records.
 - **History is the debugging surface.** Every notify attempt appends one record
-  (delivered / synth_failed / transport_timeout / transport_failed) — stderr on a
+  (delivered / muted / synth_failed / transport_timeout / transport_failed) — stderr on a
   fire-and-forget hook is not observability.
 - **Single speech path.** Exactly one function (`say_notify`) and one pipe. No parallel
   speech implementations, no compatibility aliases for retired transports.

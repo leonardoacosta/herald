@@ -31,9 +31,9 @@ than carrying their own copies.
 ## What Changes
 
 - **`plugin/` in herald**, shaped as an installable CC plugin
-  (exemplar: `~/dev/personal/cc-plugins/leo-core/` — `plugin.json` at package root,
-  `commands/`, `skills/`, `scripts/`; note that repo is generated output — imitate the
-  *shape*, author here):
+  using Claude Code's local marketplace shape: `.claude-plugin/plugin.json`,
+  `.claude-plugin/marketplace.json`, `commands/`, `hooks/`, `lib/`, and
+  `output-styles/`:
   - `plugin/commands/notify.md` — the rebuilt `/notify`:
     - `status` — env sanity (`$HERALD`, pipe executable, Kokoro health URL), mute state
     - `history [n]` — tail herald's `notify.ndjson`, human-rendered
@@ -45,13 +45,16 @@ than carrying their own copies.
     - default: `/notify <text>` sends it
   - `plugin/lib/notify.sh` — the `say_notify` caller helper, moved from cc
     `scripts/lib/notify.sh` (project detection, `SAY_NOTIFY_TIMEOUT`, exit-0)
-  - `plugin/output-styles/tts-summary.md` — moved from cc `output-styles/tts-summary.md`
+  - `plugin/lib/projects-toml.sh` — the helper's adjacent project resolver dependency
+  - `plugin/output-styles/tts-summary.md` — moved from cc `output-styles/tts-summary.md`;
+    a fail-soft `SessionStart` hook injects it as plugin-owned additional context because
+    output-style directories are not a Claude Code plugin component
 - **cc afterwards**: imports the herald plugin; `scripts/lib/bash-env.sh:11` sources the
   plugin's lib path; `notify-command` spec rewritten against the herald backend (all Nexus
   references gone); `orch_tts_notify` (orchestrator-helpers.sh:339-344) collapses to a
   bare `say_notify "$message"` call.
 - **Mute semantics**: mute is a herald-side state file so it holds across all harnesses
-  and callers, not a cc env var.
+  and callers, not a cc env var. `muted` is the fifth closed history outcome.
 
 ## Non-goals / out of scope
 
@@ -63,7 +66,8 @@ than carrying their own copies.
 
 ## Exemplars
 
-- Plugin package shape: `cc-plugins/leo-core/plugin.json` + directory layout.
+- Plugin package shape: Claude Code `.claude-plugin/plugin.json` plus a local marketplace
+  manifest; matching plugin and command names preserve the `/notify` command spelling.
 - Command file format + frontmatter: cc `commands/p2p.md` frontmatter block (name,
   description, context, effort, model).
 - Mute-file check pattern: `bin/notify.sh`'s existing precondition probes (herald
@@ -89,5 +93,4 @@ prose-executed by the harness; its DoD scenarios are the test.
 ## STOP conditions
 
 - Drift at cited cc lines.
-- CC plugin import mechanism for a local repo (marketplace vs path) turns out to differ
-  from `cc-plugins`' shape — report the actual mechanism, don't invent one.
+- Claude Code rejects the local marketplace or plugin manifests during validation.
