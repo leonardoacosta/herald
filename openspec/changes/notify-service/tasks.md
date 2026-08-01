@@ -6,11 +6,11 @@ stack: infra
 
 ## API Batch
 
-- [ ] 1.1 Move mute into `pkg/notify` as the single owner of the file's format: duration
+- [x] 1.1 Move mute into `pkg/notify` as the single owner of the file's format: duration
       parsing (`s`/`m`/`h`/`d`, reject non-positive and malformed), epoch expiry, atomic
       temp+rename write, and expired-file cleanup. Verify: Go unit tests cover parse
       rejection, the expiry boundary, and that an expired file is removed on read.
-- [ ] 1.2 Move status and history readout into `pkg/notify` with stable JSON, alongside the
+- [x] 1.2 Move status and history readout into `pkg/notify` with stable JSON, alongside the
       existing `voices --json`. Status carries a build version so a client can detect skew
       against a stale running service. Verify: `herald notify status --json` and
       `herald notify history --json -n 5` emit parseable JSON with the pipe down.

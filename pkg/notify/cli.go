@@ -48,7 +48,7 @@ func RunCLI(args []string) int {
 
 func runCLI(args []string, stdout, stderr io.Writer) int {
 	if len(args) < 1 {
-		fmt.Fprintln(stderr, "usage: herald notify <synth|record|voices|catalog|set|reset|audition> ...")
+		fmt.Fprintln(stderr, "usage: herald notify <synth|record|voices|catalog|set|reset|audition|status|history|mute|unmute> ...")
 		return 1
 	}
 	switch args[0] {
@@ -66,6 +66,14 @@ func runCLI(args []string, stdout, stderr io.Writer) int {
 		return runResetVoice(args[1:], stdout, stderr)
 	case "audition":
 		return runAudition(args[1:], stdout, stderr)
+	case "status":
+		return runStatus(args[1:], stdout, stderr)
+	case "history":
+		return runHistory(args[1:], stdout, stderr)
+	case "mute":
+		return runMute(args[1:], stdout, stderr)
+	case "unmute":
+		return runUnmute(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "herald notify: unknown subcommand %q\n", args[0])
 		return 1
@@ -405,4 +413,146 @@ func collapseReason(s string) string {
 		return ""
 	}
 	return strings.Join(strings.Fields(s), " ")
+}
+
+// runStatus emits the operator readout. --json is the stable machine surface
+// (same contract as `voices --json`); the default is a human line block.
+func runStatus(args []string, stdout, stderr io.Writer) int {
+	fs := flagsOf("notify status", stderr)
+	asJSON := fs.Bool("json", false, "emit stable JSON")
+	if err := fs.Parse(args); err != nil || rejectPositionals(fs, stderr) {
+		return 1
+	}
+	dir := ResolveStateDir()
+	st, err := ReadStatus(dir)
+	if err != nil {
+		// A voices.json typo is worth reporting, but the readout is still
+		// printed: status is what you run when something is already broken.
+		fmt.Fprintf(stderr, "%v\n", err)
+	}
+	if *asJSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if encErr := enc.Encode(st); encErr != nil {
+			fmt.Fprintf(stderr, "notify: encode status: %v\n", encErr)
+			return 1
+		}
+		return 0
+	}
+	fmt.Fprintf(stdout, "version:       %s\n", st.Version)
+	fmt.Fprintf(stdout, "state dir:     %s\n", st.StateDir)
+	fmt.Fprintf(stdout, "kokoro:        %s\n", orDash(st.KokoroURL))
+	fmt.Fprintf(stdout, "default voice: %s\n", orDash(st.DefaultVoice))
+	fmt.Fprintf(stdout, "history:       %d record(s)\n", st.HistoryCount)
+	if st.Muted && st.MutedUntil != nil {
+		fmt.Fprintf(stdout, "mute:          until %s\n", st.MutedUntil.Format(time.RFC3339))
+	} else {
+		fmt.Fprintln(stdout, "mute:          off")
+	}
+	return 0
+}
+
+func orDash(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "-"
+	}
+	return s
+}
+
+// runHistory renders the tail of the delivery history.
+func runHistory(args []string, stdout, stderr io.Writer) int {
+	fs := flagsOf("notify history", stderr)
+	asJSON := fs.Bool("json", false, "emit stable JSON")
+	n := fs.Int("n", 10, "how many records to show (0 for all)")
+	if err := fs.Parse(args); err != nil || rejectPositionals(fs, stderr) {
+		return 1
+	}
+	records, err := TailHistory(ResolveStateDir(), *n)
+	if err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return 1
+	}
+	if *asJSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		// Encode a non-nil slice so an empty history is `[]`, not `null` — a
+		// consumer should not have to special-case first-run state.
+		if records == nil {
+			records = []Record{}
+		}
+		if encErr := enc.Encode(records); encErr != nil {
+			fmt.Fprintf(stderr, "notify: encode history: %v\n", encErr)
+			return 1
+		}
+		return 0
+	}
+	for _, r := range records {
+		fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\t%s\n",
+			r.TS.Format(time.RFC3339), r.Outcome, orDash(r.Project), orDash(r.Voice), r.Text)
+	}
+	return 0
+}
+
+// runMute mutes for a duration expressed in the operator vocabulary.
+func runMute(args []string, stdout, stderr io.Writer) int {
+	// Go's flag package stops parsing at the first positional, so `mute 1h --json`
+	// would read --json as an argument rather than a flag. The operator types the
+	// duration first, so lift the first non-flag token out and let the parser see
+	// only flags.
+	spec := "1h"
+	flagArgs := make([]string, 0, len(args))
+	seenDuration := false
+	for _, a := range args {
+		if !seenDuration && !strings.HasPrefix(a, "-") {
+			spec = a
+			seenDuration = true
+			continue
+		}
+		flagArgs = append(flagArgs, a)
+	}
+
+	fs := flagsOf("notify mute", stderr)
+	asJSON := fs.Bool("json", false, "emit stable JSON")
+	if err := fs.Parse(flagArgs); err != nil || rejectPositionals(fs, stderr) {
+		return 1
+	}
+	d, err := ParseMuteDuration(spec)
+	if err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return 1
+	}
+	until, err := SetMute(ResolveStateDir(), d)
+	if err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return 1
+	}
+	if *asJSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(map[string]any{"muted": true, "until": until})
+		return 0
+	}
+	fmt.Fprintf(stdout, "Herald muted until %s.\n", until.Format(time.RFC3339))
+	return 0
+}
+
+// runUnmute clears the mute. Unmuting when not muted is a no-op, not an error.
+func runUnmute(args []string, stdout, stderr io.Writer) int {
+	fs := flagsOf("notify unmute", stderr)
+	asJSON := fs.Bool("json", false, "emit stable JSON")
+	if err := fs.Parse(args); err != nil || rejectPositionals(fs, stderr) {
+		return 1
+	}
+	if err := ClearMute(ResolveStateDir()); err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return 1
+	}
+	if *asJSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(map[string]any{"muted": false})
+		return 0
+	}
+	fmt.Fprintln(stdout, "Herald unmuted.")
+	return 0
 }
