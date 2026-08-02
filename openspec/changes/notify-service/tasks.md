@@ -58,7 +58,7 @@ stack: infra
 
 - [x] 2.1 Go tests for `pkg/notify` mute/status/history/delivery and the service handlers
       (httptest). Verify: `go test ./...` passes.
-- [ ] 2.2 `tests/notify-service.test.sh` — the fallback contract AND the race it exists to
+- [x] 2.2 `tests/notify-service.test.sh` — the fallback contract AND the race it exists to
       close: service up routes through HTTP; service down routes locally; and with the service
       reachable but synthesis artificially slowed past the caller's bound, exactly ONE history
       record appears. Verify: test passes, and the slow-synthesis case fails if the endpoint is
