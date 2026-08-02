@@ -4,6 +4,49 @@
 
 `moshi-hook-parity`
 
+## Status: DEFERRED 2026-08-01 (Leo)
+
+Deferred after the inventory (task 1) was run against the live configs. The work below is
+still coherent, but the prize is materially smaller than the `## Why` section assumes, and the
+plan has a defect. **Do not execute tasks 2.x as written.** Findings, so a later run starts from
+facts instead of re-deriving them:
+
+**1. Codex permission blocks ALREADY reach the phone.** `hooks.json` wires `PermissionRequest`
+to `moshi-hook codex-hook` today. The `## Why` framing — "a codex session waiting on a question
+can look identical to one still working" — is only true for *ask/plan* attention, not for
+permission prompts, which was the larger half of the concern.
+
+**2. Codex ask/plan attention is a PLATFORM LIMIT, not a gap.** Codex's actual hook vocabulary,
+read from `~/.codex/config.toml`'s `[hooks.state]` keys: `permission_request`, `session_start`,
+`user_prompt_submit`, `stop`, `session_end`. There is no ask-level event. The `AskUserQuestion`
+occurrences in the codex repo are Claude Code *tool* names — `openspec/specs/codex-workflow/spec.md`
+says so explicitly and carries a lint to stop them leaking into codex prompts. Task 2.1's
+ask/plan half cannot be done; it can only be recorded.
+
+**3. Codex SessionEnd is a real, wirable gap** — proven rather than inferred: the
+`[hooks.state]` key `herdr-state@herdr-state-local:hooks/hooks.json:session_end:0:0` shows a
+different hook source already using `session_end` on this platform successfully.
+
+**4. The plan defect — `moshi-hook` OWNS these entries.** `moshi-hook uninstall --help`:
+"Remove agent hook configuration written by `install`", with `--target` covering
+`claude,codex,pi,...`. So `moshi-hook install` writes the moshi entries in cc's `settings.json`
+and codex's `hooks.json`, exactly as it does for pi. This proposal correctly forbids editing pi's
+`agent/extensions/*` as vendor-managed but did not notice the same trap applies to the codex and
+claude configs: a hand-added SessionEnd entry may be clobbered or duplicated by the next
+`moshi-hook install`. If task 2.1 is revived, the fix belongs upstream in moshi-hook, not in a
+hand-edit here.
+
+**Base-commit status, re-verified 2026-08-01:** codex `hooks.json` and pi `moshi-hooks.ts` are
+byte-unchanged since their pins. cc `settings.json` DID change (720 lines, commit `e7d7cb6c`, the
+herald notify plugin cutover) — but its moshi wiring is identical at pin and HEAD: the same 9
+events with the same matchers. The STOP condition is therefore satisfied in substance; re-stamp
+the pins rather than treating the churn as drift.
+
+**What would still be worth doing if revived:** task 3.1 alone — `docs/attention-channels.md`
+with the parity matrix, recording items 1-4 above. That is the durable artifact; it makes
+per-harness drift detectable, which nothing does today. Tasks 2.1-2.3 and 4.1 should be
+re-scoped or dropped in light of the findings.
+
 ## Base commits (STOP on drift)
 
 - cc `c820c42d` — `settings.json` moshi wiring
