@@ -204,6 +204,7 @@ func NewServer() *Server {
 	s := &Server{Mux: http.NewServeMux()}
 	s.Mux.HandleFunc("/health", handleHealth)
 	s.Mux.HandleFunc("/notify", NewSendQueue(SendQueueOptions{}).HandleNotify) // task 1.5, send.go
+	registerControlHandlers(s.Mux)                                             // task 1.6, control.go
 	return s
 }
 

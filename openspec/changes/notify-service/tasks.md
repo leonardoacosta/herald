@@ -32,7 +32,7 @@ stack: infra
       returns in milliseconds while synthesis is stubbed slow, and that one record lands per
       call including the `muted` case with no playback host contacted.
   - depends on: 1.3, 1.4
-- [ ] 1.6 Control endpoints `POST /mute`, `POST /unmute`, `GET /status`, `GET /history?n=`,
+- [x] 1.6 Control endpoints `POST /mute`, `POST /unmute`, `GET /status`, `GET /history?n=`,
       all delegating to 1.1/1.2 rather than reimplementing. Verify: httptest per endpoint;
       mute set via HTTP is observed by the CLI path and vice versa.
   - depends on: 1.4
