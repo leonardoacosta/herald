@@ -86,7 +86,7 @@ stack: infra
       line 12, so the file would clobber a caller's value. Verify: a file setting
       `HERALD_KOKORO_BASE_URL` is observed by `bin/notify.sh`, AND an inherited env var still
       overrides that file; both pasted.
-- [ ] 4.2 `bin/service-sync.sh` stops freezing resolved values into the unit: it writes the
+- [x] 4.2 `bin/service-sync.sh` stops freezing resolved values into the unit: it writes the
       shared env file with the resolved defaults when absent (never clobbering an existing one),
       and the unit references it via `EnvironmentFile=`. Only genuinely process-level values
       (`PATH`, `SSH_AUTH_SOCK`) remain as `Environment=`. Verify: a fresh install still starts

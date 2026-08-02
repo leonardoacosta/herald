@@ -14,6 +14,23 @@
 # player-sync.sh (playback host, launchd). Same contract, different supervisor:
 # the execution host is the Arch box, so the supervisor is systemd.
 #
+# ── Configuration lives in a FILE, not in the unit ──────────────────────────
+# This script installs the unit; it does not decide the pipeline's settings.
+# Those live in $HERALD_CONFIG_DIR/config, the single instance both halves of
+# the pipeline read — systemd via EnvironmentFile= below, bin/lib.sh via
+# `source` for every CLI/pipe caller (proposal.md § Amendment 2026-08-01).
+#
+# Until that amendment this script resolved every value ONCE here and froze the
+# results into literal Environment= lines. bin/notify.sh re-resolved the same
+# values on every invocation, and nothing bound the two: writing a config file
+# changed the pipe's behaviour immediately while the service kept serving the
+# install-time snapshot until someone re-ran this script. A snapshot is not
+# configuration; it is a copy that goes stale, silently, with no error anywhere.
+#
+# So: the file is seeded once when absent and never overwritten, the unit points
+# at it, and changing a value is `$EDITOR $HERALD_CONFIG_DIR/config` followed by
+# `systemctl --user restart herald-notify` — this script is not in that loop.
+#
 # ── USER unit, not a system unit ────────────────────────────────────────────
 # The daemon must have the SAME identity and the SAME state as the pipe, or the
 # consolidation this service exists for is undone: mute has to mean the same
@@ -50,12 +67,33 @@ source ./lib.sh
 UNIT="herald-notify.service"
 UNIT_DIR="$HOME/.config/systemd/user"
 DEST="$UNIT_DIR/$UNIT"
-# notify.DefaultServePort. Duplicated here because --status and the post-install
-# health probe have to know where to look; the unit stamps the resolved value so
-# there is exactly one number to read back, not two to reconcile.
-PORT="${HERALD_NOTIFY_PORT:-8881}"
-HEALTH_URL="http://127.0.0.1:$PORT/health"
+CONFIG_FILE="$HERALD_CONFIG_DIR/config"
 HEALTH_TIMEOUT="${HERALD_SERVICE_HEALTH_TIMEOUT:-20}"
+
+# config_value reads one KEY out of the shared env file, empty when the file or
+# the key is absent. Deliberately the same narrow grammar systemd's
+# EnvironmentFile= parser accepts and bin/lib.sh's header documents — plain
+# KEY=value, no shell — so this reader cannot come to a different conclusion
+# than the two that matter.
+config_value() {
+  [ -r "$CONFIG_FILE" ] || return 0
+  sed -n "s/^[[:space:]]*$1=//p" "$CONFIG_FILE" | tail -1
+}
+
+# notify.DefaultServePort. --status and the post-install health probe have to
+# know where to look, and the answer has to come from the FILE the service
+# actually reads: re-resolving the port independently here is the same
+# two-resolutions-bound-to-nothing defect this task removes, just one layer up —
+# an operator's exported override would aim the probe at a socket the unit never
+# binds. Env and default are the fallthrough for a host not yet seeded.
+resolve_port() {
+  local p
+  p="$(config_value HERALD_NOTIFY_PORT)"
+  [ -n "$p" ] || p="${HERALD_NOTIFY_PORT:-8881}"
+  printf '%s' "$p"
+}
+PORT="$(resolve_port)"
+HEALTH_URL="http://127.0.0.1:$PORT/health"
 
 warn() { echo "service-sync: $*" >&2; }
 fail() { warn "$*"; exit 0; }
@@ -97,20 +135,70 @@ health() { curl -fsS --max-time 5 "$HEALTH_URL" 2>/dev/null; }
 # treats it as optional.
 version_of() { printf '%s' "$1" | sed -n 's/.*"version":[[:space:]]*"\([^"]*\)".*/\1/p'; }
 
-# render_unit writes the generated unit to stdout.
+# render_config writes the SEED contents of the shared env file to stdout.
 #
-# Every Environment= line below is deployment configuration resolved ONCE here
-# through lib.sh's herald_config, which is the same precedence the pipe uses
-# (env, then $CONFIG_DIR/config, then the documented default). A daemon does not
-# source lib.sh, so without this stamping the service would fall back to
-# pkg/notify's own defaults and drift from the pipe silently — the kokoro base
-# URL in particular has NO Go-side default at all (notify.BaseURLEnv). No host
-# address is written down here; they are read, not chosen (AGENTS.md § No
-# hardcoded host addresses).
+# Seed, not template: every value is what herald_config resolves right now — the
+# same precedence the pipe uses (env, then the legacy NOTIFY_* config layer, then
+# the documented default) — so writing the file changes no behaviour. It only
+# makes what was implicit visible in one place, where editing it moves the
+# service and the pipe together instead of only one of them.
+#
+# The names are HERALD_*, not the legacy NOTIFY_* vocabulary, because systemd
+# injects these verbatim into the daemon and the daemon reads exactly these
+# (notify.StateDirEnv, kokoro.BaseURLEnv, send.PlaybackHostEnv,
+# notify.ServePortEnv, notify.HeraldProjectsEnv). No host address is written
+# down here; they are read, not chosen (AGENTS.md § No hardcoded host addresses).
 #
 # The BIND address is deliberately absent: the service resolves `tailscale ip -4`
 # itself at start (pkg/notify/service.go). kokoro-sync.sh has to stamp its
 # equivalent in because a compose file cannot shell out; this one can.
+render_config() {
+  cat <<CONFIGFILE
+# Herald deployed configuration — the ONE instance both halves of the pipeline
+# read: systemd injects it into $UNIT via EnvironmentFile=,
+# and bin/lib.sh sources it for every CLI/pipe caller.
+#
+# Format is the INTERSECTION of those two parsers (bin/lib.sh's header is the
+# spec): plain KEY=value, blank lines and # comments fine, and NO shell — no
+# export, no quoting, no expansion, no trailing comment after a value. Anything
+# bash-only here is silently ignored by systemd, which is the divergence this
+# file exists to prevent.
+#
+# Yours to edit. bin/service-sync.sh seeded this once, with the values that were
+# in effect at that moment, and never overwrites it. After a change:
+#   systemctl --user restart $UNIT
+HERALD_NOTIFY_PORT=$PORT
+HERALD_STATE_DIR=$STATE_DIR
+HERALD_KOKORO_BASE_URL=$BASE_URL
+HERALD_NOTIFY_PLAYBACK_HOST=$PLAYBACK_HOST
+HERALD_NOTIFY_PLAYBACK_TIMEOUT=$PLAYBACK_TIMEOUT
+HERALD_NOTIFY_SYNTH_TIMEOUT=$SYNTH_TIMEOUT
+HERALD_PROJECTS_TOML=$PROJECTS_TOML
+CONFIGFILE
+}
+
+# seed_config writes the shared env file when it is ABSENT, and never otherwise.
+#
+# Once written the file belongs to the operator. An installer that rewrote it on
+# every run would reinstate the staleness this task removed, one layer up: the
+# edit would survive exactly until the next sync, and the "single instance"
+# would be single only between runs.
+seed_config() {
+  if [ -f "$CONFIG_FILE" ]; then
+    echo "service-sync: config kept as-is — $CONFIG_FILE already exists (this script never overwrites it)"
+    return 0
+  fi
+  mkdir -p "$HERALD_CONFIG_DIR" 2>/dev/null || true
+  # Same temp-then-move as the unit below: a render that dies partway must not
+  # leave systemd half a config to inject.
+  if ! render_config > "$CONFIG_FILE.new" || ! mv -f "$CONFIG_FILE.new" "$CONFIG_FILE"; then
+    rm -f "$CONFIG_FILE.new"
+    fail "could not write $CONFIG_FILE — the unit requires it (EnvironmentFile= carries no leading dash)"
+  fi
+  echo "service-sync: seeded $CONFIG_FILE with the values in effect now — edit it, then \`systemctl --user restart $UNIT\`"
+}
+
+# render_unit writes the generated unit to stdout.
 render_unit() {
   cat <<UNITFILE
 [Unit]
@@ -130,13 +218,26 @@ RestartSec=5
 # The process shuts down gracefully within notify.shutdownGrace (5s). Ten leaves
 # room for that to complete on its own rather than being SIGKILLed through it.
 TimeoutStopSec=10
-Environment="HERALD_NOTIFY_PORT=$PORT"
-Environment="HERALD_STATE_DIR=$STATE_DIR"
-Environment="HERALD_KOKORO_BASE_URL=$BASE_URL"
-Environment="HERALD_NOTIFY_PLAYBACK_HOST=$PLAYBACK_HOST"
-Environment="HERALD_NOTIFY_PLAYBACK_TIMEOUT=$PLAYBACK_TIMEOUT"
-Environment="HERALD_NOTIFY_SYNTH_TIMEOUT=$SYNTH_TIMEOUT"
-Environment="HERALD_PROJECTS_TOML=$PROJECTS_TOML"
+# Deployment configuration is READ FROM A FILE, never stamped in here. The same
+# file bin/lib.sh sources for every CLI/pipe caller, so the service and the pipe
+# cannot describe different pipelines (proposal.md § Amendment 2026-08-01).
+# Changing a value is an edit plus \`systemctl --user restart $UNIT\`;
+# bin/service-sync.sh is not in that loop and does not need re-running.
+#
+# NO leading \`-\` on the path: a missing file is a hard start failure, on
+# purpose. Starting anyway is the WORSE failure, not the fail-soft one —
+# kokoro.BaseURLEnv and send.PlaybackHostEnv carry no Go-side default by
+# deliberate policy (AGENTS.md § No hardcoded host addresses), so a config-less
+# daemon still binds its port and still answers /health, which is enough for
+# bin/notify.sh to route to it, and then it synthesises nowhere and delivers
+# nowhere with nothing surfaced. Fail-soft is honoured at the layer that owns
+# it: the unit refuses to start, /health does not answer, and the local CLI/pipe
+# path takes the traffic — the same fallback --remove is verified on.
+EnvironmentFile=$CONFIG_FILE
+# The only two values that stay here are not deployment configuration at all:
+# they describe the PROCESS, and mean nothing to a caller who already has a
+# login shell and an agent.
+#
 # A daemon inherits no login shell, so PATH is explicit: the service shells
 # \`tailscale\` to resolve its bind address and \`ssh\` to deliver.
 Environment="PATH=/usr/local/bin:/usr/bin:/bin"
@@ -157,6 +258,10 @@ case "$MODE" in
     # `|| echo no` would print the verdict and "no" on two lines.
     unit_state() { local out; out="$(sctl "$1" "$UNIT" 2>/dev/null)"; printf '%s' "${out:-unknown}"; }
     echo "unit:    $([ -f "$DEST" ] && echo "installed ($DEST)" || echo missing)"
+    # The config file is a start PRECONDITION now (EnvironmentFile=, no dash),
+    # so its absence is the first thing to look at when the unit will not come
+    # up — reporting it here saves a trip to the journal.
+    echo "config:  $([ -f "$CONFIG_FILE" ] && echo "$CONFIG_FILE" || echo "MISSING ($CONFIG_FILE) — the unit cannot start without it; run this script with no arguments to seed it")"
     echo "enabled: $(unit_state is-enabled)"
     echo "active:  $(unit_state is-active)"
     echo "linger:  $(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null || echo unknown)"
@@ -202,6 +307,13 @@ if [ "$MODE" = "remove" ]; then
   # absence rather than the ghost of a unit that no longer exists.
   sctl reset-failed "$UNIT" >/dev/null 2>&1 || true
   echo "service-sync: $UNIT stopped, disabled, and removed (backup in $STATE_DIR/backups)"
+  # $CONFIG_FILE is deliberately NOT deleted, for the same reason kokoro-sync.sh
+  # keeps the model volume: it is the operator's, not the unit's. bin/lib.sh
+  # sources that exact file for every CLI/pipe caller, so removing it here would
+  # change the behaviour of the very fallback path --remove exists to leave
+  # working — the removal would break the thing it is verified on. What is being
+  # removed is the supervisor, not the configuration.
+  [ -f "$CONFIG_FILE" ] && echo "service-sync: $CONFIG_FILE left in place — it configures the CLI/pipe path too; delete it explicitly when that is what you mean"
   if health >/dev/null; then
     warn "$HEALTH_URL still answers — something else is holding port $PORT"
   fi
@@ -228,6 +340,14 @@ case "$("$BIN" notify 2>&1)" in
   *'|serve>'*) ;;
   *) fail "$BIN has no 'notify serve' subcommand — rebuild it: go build -o bin/herald ./cmd/herald" ;;
 esac
+
+# Before the unit, because the unit will not start without it.
+seed_config
+# Re-resolve now that the file exists: on a fresh host the probe above fell
+# through to the default with nothing to read, and the unit binds what the file
+# says.
+PORT="$(resolve_port)"
+HEALTH_URL="http://127.0.0.1:$PORT/health"
 
 UNIT_CHANGED=1
 if [ -f "$DEST" ] && render_unit | diff -q - "$DEST" >/dev/null 2>&1; then
