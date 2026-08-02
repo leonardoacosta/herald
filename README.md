@@ -17,15 +17,35 @@ Before herald, the notification pipeline was split across three repos with no si
 Herald extracts the pipeline into one repo with one responsibility, consumed by all three
 harnesses (claude/cc, codex, pi) as a plugin.
 
-## Architecture (target)
+## Architecture
+
+Herald is a resident service (`herald notify serve`) with the CLI/pipe kept as its fallback
+transport. `bin/notify.sh` posts to the service first; it falls through to the local path
+ONLY when the service was never reached — never on a slow or erroring response, which the
+service may have already recorded. `POST /notify` accepts and queues rather than completing
+synchronously: synthesis (2.5-8.5s) and delivery run async after the `202`, because a
+synchronous response can time the caller out after delivery already happened and double-speak
+through the fallback. See `AGENTS.md` for the full fallback guarantee and bind posture.
 
 ```
 Harness hook or inline Bash
-  → say_notify "text"              (plugin/lib, preloaded via BASH_ENV in cc)
-    → $HERALD/bin/notify.sh        (argument handling + ssh transport)
-      → herald notify              (Go: voice resolution, synthesis, history)
-        → Kokoro-FastAPI           (homelab, compose module owned here)
-          → playback host          (ssh + afplay)
+  → say_notify "text"                     (plugin/lib, preloaded via BASH_ENV in cc)
+    → $HERALD/bin/notify.sh               (argument handling; service client first)
+
+      ── primary: service reachable ──────────────────────────────────────────
+      → POST /notify (herald notify serve, loopback + tailnet, :8881)
+        → accept + enqueue → 202 (ms)      (history record written here)
+          → async worker: synth → deliver
+            → Kokoro-FastAPI               (homelab, compose module owned here)
+              → playback host              (ssh + afplay)
+
+      ── fallback: service unreachable only ──────────────────────────────────
+      → herald notify                     (Go: voice resolution, synthesis, history)
+        → Kokoro-FastAPI                  (homelab, compose module owned here)
+          → playback host                 (ssh + afplay)
+
+Operator / any tailnet caller (e.g. pi)
+  → POST /mute, /unmute, GET /status, GET /history?n=   (herald notify serve control surface)
 
 Harness hook events
   → moshi-hook {claude,codex,pi}-hook   (Moshi mobile app: inbox, Live Activities, approvals)

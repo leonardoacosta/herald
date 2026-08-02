@@ -67,7 +67,7 @@ stack: infra
       elsewhere. Verify: test output showing both reachable and a third interface refused.
 - [ ] 2.4 Cross-host proof: `curl` from the Mac over the tailnet produces audible speech and
       one history record. Verify: command + resulting history line pasted.
-- [ ] 2.5 Update `AGENTS.md` (service lifecycle, bind posture, accept-and-queue semantics, and
+- [x] 2.5 Update `AGENTS.md` (service lifecycle, bind posture, accept-and-queue semantics, and
       the fallback guarantee beside the existing fail-soft and one-voice-at-a-time rules) and
       `README.md`'s architecture diagram. Verify: rules present and naming the fallback
       guarantee.
