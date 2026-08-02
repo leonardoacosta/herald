@@ -112,10 +112,10 @@ format SHALL be restricted to what both accept.
 
 ### Requirement: A caller describing a different pipeline does not use the service
 
-A caller whose resolved configuration identifies a different notification pipeline than the
-deployed one SHALL NOT hand its notification to the deployed service, and SHALL instead take
-Herald's local path. Silently routing such a caller to the deployed service records its
-notification in state it did not choose and synthesizes it through an engine it did not select.
+A caller SHALL NOT hand its notification to the deployed service when its own resolved
+configuration identifies a different notification pipeline; it SHALL take Herald's local path
+instead. Silently routing such a caller to the deployed service records its notification in
+state it did not choose and synthesizes it through an engine it did not select.
 
 #### Scenario: An isolated caller stays isolated
 
