@@ -15,6 +15,14 @@
 # and none of them handle an error. A failure here is recorded in the notify
 # history and reported on stderr, never propagated to the caller.
 #
+# This script is a CLIENT of herald's resident service (`herald notify
+# serve`, tasks 1.4/1.5) first: it posts to the service and, if the service
+# is reachable, returns as soon as the service responds — the service owns
+# the history record for that call. Everything below the "## Service
+# attempt" block only runs when the service could not be reached at all, or
+# when --wait bypassed it outright. See that block for exactly what
+# "reachable" means and why it is not simply "curl exited 0".
+#
 # Delivery is REMOTE-ONLY (Leo, 2026-07-25). The homelab synthesizes and the
 # playback host plays; there is no local-playback path and no --local flag.
 #
@@ -82,6 +90,106 @@ PLAYBACK_HOST="$(herald_config NOTIFY_PLAYBACK_HOST HERALD_NOTIFY_PLAYBACK_HOST 
 PLAYBACK_TIMEOUT="$(herald_config NOTIFY_PLAYBACK_TIMEOUT HERALD_NOTIFY_PLAYBACK_TIMEOUT 10 HERDR_NOTIFY_PLAYBACK_TIMEOUT)"
 SYNTH_TIMEOUT="$(herald_config NOTIFY_SYNTH_TIMEOUT HERALD_NOTIFY_SYNTH_TIMEOUT 30 HERDR_NOTIFY_SYNTH_TIMEOUT)"
 export HERALD_KOKORO_BASE_URL="$BASE_URL"
+
+# ── Service attempt ──────────────────────────────────────────────────────────
+# herald gained a resident service (tasks 1.4/1.5): POST /notify validates,
+# checks mute, enqueues, and returns in milliseconds — synthesis and delivery
+# run async, and the service writes the ONE history record for the call
+# itself (send.go). This script is that service's client first, falling back
+# to everything below ONLY when the request could never have reached it.
+#
+# --wait skips this block entirely (the WAIT check below) and always runs the
+# local path unchanged: it blocks through playback for evidence capture, which
+# an accept-and-queue endpoint cannot express (proposal.md "## What Changes",
+# "`--wait` stays local"). It is the one caller that does not want a queue.
+#
+# The reachable/unreachable line is the one thing this task exists to get
+# right, and it is NOT "did curl exit 0":
+#
+#   UNREACHABLE (safe, and the ONLY case allowed to fall back) — curl never
+#   established a TCP connection, or never even tried: DNS/host resolution
+#   failure, connection refused, an unsupported protocol or malformed URL
+#   (a misconfigured NOTIFY_SERVICE_URL), or the connect phase itself timing
+#   out. Nothing was ever sent, so nothing could have been queued or
+#   recorded, and falling through is the only way to avoid silencing the
+#   notification (AGENTS.md fail-soft; proposal.md STOP condition #1: "the
+#   service being down can silence a notification").
+#
+#   REACHABLE (never fall back, whatever happens next) — a TCP connection was
+#   established. From that instant the service may already have accepted and
+#   recorded the request even if what comes back is slow, an HTTP error
+#   status, or the response read times out past --max-time: HandleNotify's
+#   202 (queued) and 503 (queue full) paths both write the history record
+#   themselves before or as they respond (send.go). Falling back here would
+#   speak the notification a second time — proposal.md STOP condition #2,
+#   named explicitly as worse than the alternative: "a double-send is worse
+#   than a missed optimisation."
+#
+# curl conflates "the connect phase timed out" and "the response phase timed
+# out" under one exit code (28, CURLE_OPERATION_TIMEDOUT), whichever of
+# --connect-timeout/--max-time fired. So --connect-timeout bounds ONLY the
+# connect phase (kept short: this is a loopback/tailnet call, not the
+# cross-host ssh delivery further down) and --max-time bounds the whole
+# request more generously; %{time_connect} from curl's write-out then tells
+# the two timeout cases apart after the fact — zero means the connect phase
+# itself never finished (unreachable, fall back), nonzero means a connection
+# was made before anything timed out (reachable, do not fall back).
+#
+# Requires jq to build a well-formed JSON body (TEXT can carry quotes,
+# newlines, unicode) and curl to speak HTTP; either missing degrades to the
+# local path exactly as if the service were unreachable — the same posture
+# record_unavailable_binary takes below on a missing herald binary.
+if [ "$WAIT" -eq 0 ] && command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+  # Loopback default: like BASE_URL above, notify.sh and the service
+  # normally colocate on the execution host — the tailnet bind exists for
+  # OTHER callers (pi), not for this one. herald_config gives this the same
+  # env/config/default precedence as every other setting here (AGENTS.md
+  # "No hardcoded host addresses").
+  SERVICE_URL="$(herald_config NOTIFY_SERVICE_URL HERALD_NOTIFY_SERVICE_URL http://127.0.0.1:8881)"
+  SERVICE_URL="${SERVICE_URL%/}"
+  SERVICE_CONNECT_TIMEOUT="$(herald_config NOTIFY_SERVICE_CONNECT_TIMEOUT HERALD_NOTIFY_SERVICE_CONNECT_TIMEOUT 2)"
+  SERVICE_MAX_TIME="$(herald_config NOTIFY_SERVICE_TIMEOUT HERALD_NOTIFY_SERVICE_TIMEOUT 5)"
+
+  REQUEST_JSON="$(jq -cn --arg text "$TEXT" --arg project "$PROJECT" '{text:$text, project:$project}')"
+  SERVICE_META="$(curl -sS \
+    --connect-timeout "$SERVICE_CONNECT_TIMEOUT" \
+    --max-time "$SERVICE_MAX_TIME" \
+    -H 'Content-Type: application/json' \
+    --data-binary "$REQUEST_JSON" \
+    -o /dev/null \
+    -w '%{http_code} %{time_connect}' \
+    "$SERVICE_URL/notify" 2>/dev/null)"
+  CURL_RC=$?
+  HTTP_CODE="${SERVICE_META%% *}"
+  TIME_CONNECT="${SERVICE_META#* }"
+
+  UNREACHABLE=0
+  case "$CURL_RC" in
+    1|3|5|6|7) UNREACHABLE=1 ;;  # never connected: bad URL/protocol, DNS, refused
+    28)
+      case "$TIME_CONNECT" in
+        *[1-9]*) UNREACHABLE=0 ;;  # connected before the timeout hit
+        *) UNREACHABLE=1 ;;        # connect phase itself never finished
+      esac
+      ;;
+    *) UNREACHABLE=0 ;;  # 0 (success) or any failure past the connect phase —
+                          # never treat it as license to speak a second time
+  esac
+
+  if [ "$UNREACHABLE" -eq 0 ]; then
+    case "$HTTP_CODE" in
+      2??)
+        echo "notify: service accepted (HTTP $HTTP_CODE) at $SERVICE_URL, delivery async"
+        ;;
+      *)
+        warn "service at $SERVICE_URL responded HTTP $HTTP_CODE (curl rc=$CURL_RC) — not falling back; the service already owns this attempt's history record"
+        ;;
+    esac
+    exit 0
+  fi
+  warn "service at $SERVICE_URL unreachable (curl rc=$CURL_RC), falling back to the local path"
+  # falls through to the local path below, unchanged
+fi
 
 BIN="$(herald_bin)" || {
   record_unavailable_binary

@@ -36,7 +36,7 @@ stack: infra
       all delegating to 1.1/1.2 rather than reimplementing. Verify: httptest per endpoint;
       mute set via HTTP is observed by the CLI path and vice versa.
   - depends on: 1.4
-- [ ] 1.7 `bin/notify.sh` becomes a client: post to the service and fall through to today's
+- [x] 1.7 `bin/notify.sh` becomes a client: post to the service and fall through to today's
       local logic ONLY on failure to reach it — never on a slow or error response, which may
       mean the service already delivered. `--wait` bypasses the service entirely and runs the
       local path. Verify: shell test asserts delivery with the service up, with it down, and
