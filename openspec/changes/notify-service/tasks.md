@@ -72,9 +72,43 @@ stack: infra
       `README.md`'s architecture diagram. Verify: rules present and naming the fallback
       guarantee.
 
+## Config Batch
+
+> Amendment 2026-08-01 (Leo). One env file is the single configuration instance both the service
+> and the caller read, instead of two independent resolutions that agree only by coincidence.
+> Rationale and the two precedence defects: `proposal.md` § Amendment.
+
+- [ ] 4.1 Make `$HERALD_CONFIG_DIR/config` a shared `KEY=value` env file consumable by BOTH
+      `bin/lib.sh` (`source`) and systemd (`EnvironmentFile=`): document the format constraint
+      (no shell, no `export`, `HERALD_*` names so systemd injects what the service actually
+      reads), and fix `bin/lib.sh` so an explicitly-inherited environment variable still beats
+      the file — today `HERALD_STATE_DIR` is defaulted at line 5 before the file is sourced at
+      line 12, so the file would clobber a caller's value. Verify: a file setting
+      `HERALD_KOKORO_BASE_URL` is observed by `bin/notify.sh`, AND an inherited env var still
+      overrides that file; both pasted.
+- [ ] 4.2 `bin/service-sync.sh` stops freezing resolved values into the unit: it writes the
+      shared env file with the resolved defaults when absent (never clobbering an existing one),
+      and the unit references it via `EnvironmentFile=`. Only genuinely process-level values
+      (`PATH`, `SSH_AUTH_SOCK`) remain as `Environment=`. Verify: a fresh install still starts
+      and answers `/health` with no pre-existing file; editing the file and restarting the unit
+      changes `GET /status` WITHOUT re-running `service-sync.sh` — the staleness this amendment
+      exists to remove, pasted before and after.
+  - depends on: 4.1
+- [ ] 4.3 `bin/notify.sh` bypasses the service when its resolved config describes a different
+      pipeline than the deployed one (state dir or Kokoro URL differing from the shared env
+      file), running the local path exactly as `--wait` does. Verify: `tests/notify-brief.test.sh`
+      passes UNMODIFIED, and a caller whose config matches still routes through the service —
+      both pasted, plus evidence the bypass is not simply disabling the service for everyone.
+  - depends on: 4.1
+- [ ] 4.4 Tests and docs for the amendment: a regression test covering the shared-file contract
+      and the divergence bypass, plus `AGENTS.md`/`README.md` updated to describe the one-file
+      config contract and its format. Verify: the full shell suite and `go test ./...` pass with
+      nothing marked as a known failure.
+  - depends on: 4.2, 4.3
+
 ## User Gate
 
-- [ ] [user:post] 3.1 DECISION: make the service the default transport for `say_notify`, or keep the local pipe primary until it has run a while? Answerable only after 2.4 proves the cross-host path in practice. searched: `AGENTS.md` ground rules, `openspec/specs/notify-pipeline/spec.md`, and the archived `warm-playback` proposal; no documented pattern covers when a herald fallback graduates to primary — `warm-playback` set the fallback precedent but never had to pick a default transport.
+- [x] [user:post] 3.1 DECISION: make the service the default transport for `say_notify`, or keep the local pipe primary until it has run a while? Answerable only after 2.4 proves the cross-host path in practice. searched: `AGENTS.md` ground rules, `openspec/specs/notify-pipeline/spec.md`, and the archived `warm-playback` proposal; no documented pattern covers when a herald fallback graduates to primary — `warm-playback` set the fallback precedent but never had to pick a default transport.
   - Option 1: Service primary immediately — every caller gets one path, and the fallback is
     genuinely exceptional. Fastest convergence; a service bug reaches every notification.
   - Option 2: Local pipe primary, service opt-in via env for pi only — lowest risk to Leo's

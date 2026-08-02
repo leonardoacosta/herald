@@ -92,6 +92,53 @@ dies the lock goes stale and delivery falls back to `afplay` automatically. Same
 service when up, current path when not. A notification MUST NOT depend on the daemon being
 healthy.
 
+## Amendment 2026-08-01 — one config instance, not two resolutions
+
+Leo, after the 15 tasks landed: *"why do we even need to set these environment variables this
+way — the service should receive them at deployment time and the caller should be invoked by the
+same env file. Separating them only causes this type of tension."*
+
+The tension was found by a regression: `tests/notify-brief.test.sh` isolates itself with
+`HERALD_STATE_DIR` and a dead `HERALD_KOKORO_BASE_URL`, and once `bin/notify.sh` became a service
+client (1.7) those overrides were silently ignored — the request went to the live service, which
+used its own state dir and its own Kokoro, and spoke aloud. The test is not flaky; it is
+correctly detecting that caller and service stopped describing the same pipeline.
+
+The root cause is not the client change. It is that **the two halves resolve configuration
+independently and are bound to nothing**:
+
+- `bin/service-sync.sh` resolves every value ONCE at install time (`herald_config`) and freezes
+  the results into literal `Environment=` lines in the unit.
+- `bin/notify.sh` resolves the same values through the same `herald_config` on EVERY invocation.
+- There is no `~/.config/herald/config` on this host, so the two agree today only because both
+  fall through to identical defaults. Nothing enforces it.
+
+The failure this shape guarantees, independent of the test: write a config file changing the
+Kokoro URL and `bin/notify.sh` honors it on the next call while the service keeps serving the
+frozen value until someone re-runs `service-sync.sh` — a silent split between the two halves of
+one pipeline, with no error surfaced anywhere. A snapshot taken at install time is not
+configuration; it is a copy that goes stale.
+
+**What changes**: one env file is the single instance both halves read — systemd via
+`EnvironmentFile=`, the shell via `source`. Same file, same values, no re-resolution. A plain
+`KEY=value` file is valid input to both, which is what makes the convergence possible at all.
+
+Two defects surfaced while investigating, both in scope here:
+
+- `bin/lib.sh` defaults `HERALD_STATE_DIR` (line 5) BEFORE sourcing the config file (line 12), so
+  a config file carrying `HERALD_STATE_DIR=` would clobber a caller's explicitly-inherited value.
+  The file must lose to a real environment variable, not win.
+- The config file's variables are named `NOTIFY_*` while the environment's are `HERALD_*`
+  (`herald_config`'s two-vocabulary precedence). A file consumed by systemd must carry the names
+  the service actually reads, so the shared file uses `HERALD_*` and `NOTIFY_*` becomes the
+  legacy layer.
+
+**Divergence becomes explicit rather than silent.** With one shared file defining the deployed
+pipeline, a caller whose resolved config differs from that file is by definition describing a
+DIFFERENT pipeline than the running service — so `bin/notify.sh` bypasses the service and runs
+locally, the same carve-out `--wait` already uses. That is what makes `notify-brief.test.sh` pass
+again without weakening it: the test genuinely is a different pipeline, and now says so.
+
 ## Non-goals / out of scope
 
 - **No mid-flight control** (stop, skip, pause, volume). `serial-playback` and `warm-playback`
