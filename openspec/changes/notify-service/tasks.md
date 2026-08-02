@@ -100,7 +100,7 @@ stack: infra
       passes UNMODIFIED, and a caller whose config matches still routes through the service —
       both pasted, plus evidence the bypass is not simply disabling the service for everyone.
   - depends on: 4.1
-- [ ] 4.4 Tests and docs for the amendment: a regression test covering the shared-file contract
+- [x] 4.4 Tests and docs for the amendment: a regression test covering the shared-file contract
       and the divergence bypass, plus `AGENTS.md`/`README.md` updated to describe the one-file
       config contract and its format. Verify: the full shell suite and `go test ./...` pass with
       nothing marked as a known failure.

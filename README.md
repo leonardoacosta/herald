@@ -67,8 +67,10 @@ attempt appends exactly one record to
 transport, timeout, and missing-binary failures. There is no local playback path
 or compatibility alias for an older transport.
 
-Configuration precedence is environment, optional
-`${HERALD_CONFIG_DIR:-~/.config/herald}/config`, then the documented default:
+Configuration is ONE shared file, `${HERALD_CONFIG_DIR:-~/.config/herald}/config`, read by
+BOTH halves of the pipeline: `bin/lib.sh` via `source` for every CLI/pipe invocation, and the
+`herald-notify.service` unit via systemd's `EnvironmentFile=`. Precedence is environment, then
+that file, then the documented default:
 
 | Environment | Config key | Default |
 | --- | --- | --- |
@@ -76,10 +78,29 @@ Configuration precedence is environment, optional
 | `HERALD_NOTIFY_PLAYBACK_HOST` | `NOTIFY_PLAYBACK_HOST` | `mac` |
 | `HERALD_NOTIFY_PLAYBACK_TIMEOUT` | `NOTIFY_PLAYBACK_TIMEOUT` | `10` seconds |
 | `HERALD_NOTIFY_SYNTH_TIMEOUT` | `NOTIFY_SYNTH_TIMEOUT` | `30` seconds |
+| `HERALD_NOTIFY_PORT` | — | `8881` |
+| `HERALD_STATE_DIR` | — | `~/.local/state/herald` |
+| `HERALD_PROJECTS_TOML` | — | see "Voice management" below |
+
+The file is plain `KEY=value` — the intersection of what bash `source` and systemd's
+`EnvironmentFile=` both accept, which is what lets one file drive both readers identically. No
+shell: no `export`, no quoting, no expansion, no trailing inline comment after a value — either
+of those would parse fine under `source` and silently diverge under systemd. `HERALD_*` names
+only; the "Config key" column above is a one-release legacy layer this file does not use.
+`bin/service-sync.sh` seeds the file once, at install, with the values in effect at that
+moment, and never overwrites it again. To change a deployed value: edit the file, then
+`systemctl --user restart herald-notify.service` — `bin/service-sync.sh` is not part of that
+loop. A value explicitly exported in a caller's own environment still overrides the file for
+that one invocation.
+
+A caller whose own resolved state dir or Kokoro URL disagrees with what the file declares
+bypasses the service and runs the local path instead of handing the request to an instance
+that would synthesize or record it somewhere unexpected. See `AGENTS.md` for the full
+contract, including the escape hatch for a caller deliberately pointed at a different service.
 
 Legacy `HERDR_*` notification variables remain fallback reads for one release.
-Service lifecycle is managed by `bin/kokoro-sync.sh`; the committed Compose module
-requires `KOKORO_BIND_TAILSCALE_IP` and never embeds a host address.
+Kokoro's own service lifecycle is managed separately by `bin/kokoro-sync.sh`; the committed
+Compose module requires `KOKORO_BIND_TAILSCALE_IP` and never embeds a host address.
 
 ### Voice management
 

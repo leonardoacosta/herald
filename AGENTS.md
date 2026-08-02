@@ -70,6 +70,31 @@ attention (speech, mobile push, history, control surface), it does not belong he
   `go build -o bin/herald ./cmd/herald`, re-run `bin/service-sync.sh` — it compares the
   running build's version against the on-disk binary and restarts on mismatch — or restart
   the unit directly.
+- **Deployed configuration is ONE shared file, not two resolutions.**
+  `${HERALD_CONFIG_DIR:-~/.config/herald}/config` is read by BOTH halves of the pipeline —
+  systemd via `EnvironmentFile=` in the `herald-notify.service` unit, and `bin/lib.sh` via
+  `source` for every CLI/pipe caller — so editing it moves the service and the pipe together
+  instead of only one of them (`proposal.md` § Amendment 2026-08-01). The format is the
+  intersection of what both parsers accept: plain `KEY=value` lines, blank lines and `#`
+  comments are fine, **no shell** — no `export`, no quoting, no expansion, no trailing inline
+  comment — and `HERALD_*` names, the vocabulary the service itself reads (`NOTIFY_*` is a
+  one-release legacy layer `herald_config` also accepts, but the shared file doesn't use it).
+  `bin/service-sync.sh` seeds the file once, at install, with the values in effect at that
+  moment, and never overwrites it again. To change a deployed value: edit the file, then
+  `systemctl --user restart herald-notify.service` — `bin/service-sync.sh` is not in that
+  loop. A caller's explicitly-exported environment variable still beats the file for that one
+  invocation (`bin/lib.sh`'s inherited-variable snapshot/restore around the `source`).
+- **A caller whose resolved config diverges from the deployed file bypasses the service.**
+  `bin/notify.sh` compares its own resolved state dir and Kokoro URL against the shared
+  file's declared values and, on a mismatch, skips the service and runs the local path — the
+  same carve-out `--wait` already uses — because handing the request to the service would
+  mean the wrong Kokoro synthesizing it, or the outcome landing in a state dir the caller
+  never reads. (Playback host is deliberately excluded from this comparison: it decides
+  where audio goes, not which service/state/synthesis instance answers.) The check fires
+  only when `HERALD_NOTIFY_SERVICE_URL` is still the well-known default — a caller that
+  pointed it elsewhere has already chosen its pipeline, which is what keeps
+  `tests/notify-service.test.sh`'s own multi-instance fixture working. An absent file
+  compares against the documented defaults above rather than skipping the check outright.
 
 ## Layout
 
