@@ -143,6 +143,61 @@ func TestClearMuteIsIdempotent(t *testing.T) {
 	}
 }
 
+// TestSetMuteReplacesAnExistingMute pins the "atomic replace" claim
+// proposal.md § Testing names for this file: every existing test above sets
+// a mute against a clean directory, so calling SetMute a second time — the
+// actual replace case — was untested.
+func TestSetMuteReplacesAnExistingMute(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := SetMute(dir, time.Minute); err != nil {
+		t.Fatalf("first SetMute: %v", err)
+	}
+	second, err := SetMute(dir, time.Hour)
+	if err != nil {
+		t.Fatalf("second SetMute: %v", err)
+	}
+	muted, until, err := MuteState(dir)
+	if err != nil {
+		t.Fatalf("MuteState: %v", err)
+	}
+	if !muted {
+		t.Fatal("expected muted after replacing an existing mute")
+	}
+	if until.Unix() != second.Unix() {
+		t.Errorf("expiry = %s, want the second call's %s — the replace did not win", until, second)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != muteFile {
+		names := make([]string, len(entries))
+		for i, e := range entries {
+			names[i] = e.Name()
+		}
+		t.Errorf("dir contains %v after a replace, want exactly one file named %q", names, muteFile)
+	}
+}
+
+// TestSetMuteLeavesNoTempFileBehind: SetMute writes via same-directory
+// temp+rename (mute.go's doc comment); a successful call must never leave
+// the `.mute.*` staging file it created along the way.
+func TestSetMuteLeavesNoTempFileBehind(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := SetMute(dir, time.Hour); err != nil {
+		t.Fatalf("SetMute: %v", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".mute.") {
+			t.Errorf("leaked temp file %q after a successful SetMute", e.Name())
+		}
+	}
+}
+
 func TestSetMuteRejectsNonPositive(t *testing.T) {
 	dir := t.TempDir()
 	for _, d := range []time.Duration{0, -time.Hour} {

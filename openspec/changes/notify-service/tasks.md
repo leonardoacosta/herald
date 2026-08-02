@@ -56,7 +56,7 @@ stack: infra
 
 ## E2E Batch
 
-- [ ] 2.1 Go tests for `pkg/notify` mute/status/history/delivery and the service handlers
+- [x] 2.1 Go tests for `pkg/notify` mute/status/history/delivery and the service handlers
       (httptest). Verify: `go test ./...` passes.
 - [ ] 2.2 `tests/notify-service.test.sh` — the fallback contract AND the race it exists to
       close: service up routes through HTTP; service down routes locally; and with the service
