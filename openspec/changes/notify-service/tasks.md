@@ -78,7 +78,7 @@ stack: infra
 > and the caller read, instead of two independent resolutions that agree only by coincidence.
 > Rationale and the two precedence defects: `proposal.md` § Amendment.
 
-- [ ] 4.1 Make `$HERALD_CONFIG_DIR/config` a shared `KEY=value` env file consumable by BOTH
+- [x] 4.1 Make `$HERALD_CONFIG_DIR/config` a shared `KEY=value` env file consumable by BOTH
       `bin/lib.sh` (`source`) and systemd (`EnvironmentFile=`): document the format constraint
       (no shell, no `export`, `HERALD_*` names so systemd injects what the service actually
       reads), and fix `bin/lib.sh` so an explicitly-inherited environment variable still beats
