@@ -82,3 +82,50 @@ over that implementation. No surface SHALL reimplement Herald's on-disk formats.
 - **WHEN** a harness command file's control branches are inspected
 - **THEN** they contain no duration arithmetic, epoch computation, or state-file writes — only
   calls into Herald
+
+### Requirement: The deployed pipeline has exactly one configuration instance
+
+The service and the callers that speak to it SHALL read their deployment configuration from a
+single shared instance, not from independent resolutions of the same precedence rule. A value
+SHALL NOT be captured into the service's supervisor definition at install time, because a
+captured value is a copy that goes stale the moment the shared configuration changes.
+
+Because the configuration is consumed by both a shell reader and a service-manager reader, its
+format SHALL be restricted to what both accept.
+
+#### Scenario: A configuration change reaches the service
+
+- **WHEN** the shared configuration is edited and the service is restarted
+- **THEN** the service serves the new values, with no reinstall or re-provisioning step required
+
+#### Scenario: Caller and service never disagree about the deployment
+
+- **WHEN** a caller and the running service both resolve a configuration value
+- **THEN** they resolve the same value, because they read the same instance rather than agreeing
+  by coincidence
+
+#### Scenario: An explicit override still wins
+
+- **WHEN** a caller explicitly sets a configuration value in its environment
+- **THEN** that value takes precedence over the shared configuration, which is otherwise the
+  source of truth
+
+### Requirement: A caller describing a different pipeline does not use the service
+
+A caller whose resolved configuration identifies a different notification pipeline than the
+deployed one SHALL NOT hand its notification to the deployed service, and SHALL instead take
+Herald's local path. Silently routing such a caller to the deployed service records its
+notification in state it did not choose and synthesizes it through an engine it did not select.
+
+#### Scenario: An isolated caller stays isolated
+
+- **WHEN** a caller sets its own state location or synthesis engine and sends a notification
+- **THEN** the notification is handled entirely by the local path, and the deployed service's
+  state is untouched
+
+#### Scenario: Isolation is not a global opt-out
+
+- **WHEN** a caller whose configuration matches the deployment sends a notification immediately
+  after an isolated caller did
+- **THEN** it is still handled by the service — one caller's isolation never disables the
+  service for others
