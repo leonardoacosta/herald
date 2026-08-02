@@ -94,7 +94,7 @@ stack: infra
       changes `GET /status` WITHOUT re-running `service-sync.sh` — the staleness this amendment
       exists to remove, pasted before and after.
   - depends on: 4.1
-- [ ] 4.3 `bin/notify.sh` bypasses the service when its resolved config describes a different
+- [x] 4.3 `bin/notify.sh` bypasses the service when its resolved config describes a different
       pipeline than the deployed one (state dir or Kokoro URL differing from the shared env
       file), running the local path exactly as `--wait` does. Verify: `tests/notify-brief.test.sh`
       passes UNMODIFIED, and a caller whose config matches still routes through the service —

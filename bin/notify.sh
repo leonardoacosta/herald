@@ -91,6 +91,97 @@ PLAYBACK_TIMEOUT="$(herald_config NOTIFY_PLAYBACK_TIMEOUT HERALD_NOTIFY_PLAYBACK
 SYNTH_TIMEOUT="$(herald_config NOTIFY_SYNTH_TIMEOUT HERALD_NOTIFY_SYNTH_TIMEOUT 30 HERDR_NOTIFY_SYNTH_TIMEOUT)"
 export HERALD_KOKORO_BASE_URL="$BASE_URL"
 
+# ── Divergence bypass ─────────────────────────────────────────────────────────
+# Amendment 2026-08-01 (proposal.md "one config instance, not two resolutions",
+# closing paragraph): with $HERALD_CONFIG_DIR/config as the ONE shared file
+# describing the deployed pipeline (tasks 4.1/4.2 — systemd's EnvironmentFile=
+# and this script's own `source` both read it), a caller whose resolved config
+# disagrees with that file is by construction describing a DIFFERENT herald
+# than the one the service on this host is serving: state dir is where its
+# history/mute state lives, Kokoro URL is which synthesis engine answers it.
+# Handing such a caller's notification to that service would make the service
+# synthesize with the wrong Kokoro or record the outcome into a state dir the
+# caller never reads — not a timing race like the ones "## Service attempt"
+# below guards against, but a wrong-recipient bug no reachability check can
+# see, because the connection itself succeeds. So this caller takes the same
+# carve-out --wait already uses: skip the service, run the local path.
+#
+# This is a NEW, EARLIER condition than "## Service attempt" below, not a
+# change to its reachable/unreachable logic — it decides whether to attempt
+# the service AT ALL, before that block ever asks whether the attempt landed.
+#
+# Applies ONLY when SERVICE_URL is still the well-known default. A caller
+# that has explicitly pointed HERALD_NOTIFY_SERVICE_URL somewhere else has
+# already made an informed choice about which pipeline it is calling —
+# tests/notify-service.test.sh does exactly this, standing up its own
+# ephemeral `herald notify serve` with a state dir and Kokoro stub that have
+# nothing to do with $HERALD_CONFIG_DIR/config, and pointing
+# HERALD_NOTIFY_SERVICE_URL at it on purpose. Comparing THAT caller's config
+# against the deployed file would reject a deliberate multi-instance caller
+# as if it were the confused one. The confusion this check exists to catch is
+# narrower: "I never thought about the service at all, I just hit the default
+# URL, and my config happens to describe something else" — exactly
+# tests/notify-brief.test.sh, the regression that motivated this task.
+#
+# Deliberately excluded: HERALD_NOTIFY_PLAYBACK_HOST. It names where audio is
+# DELIVERED, not which service/state/synthesis instance answers the request —
+# a caller can legitimately want its own playback target without describing a
+# different pipeline. (If it diverges, the service's async worker still plays
+# to ITS OWN configured host regardless of what the caller sent — true today,
+# independent of this task, and not something this check is positioned to fix
+# without a request-scoped playback override, which is out of scope here.)
+#
+# Deliberately no second `source`: bin/lib.sh already applied the file to
+# THIS process with env-beats-file precedence (task 4.1), so RESOLVED_STATE_DIR
+# and BASE_URL below already carry that resolution. deployed_config_value
+# parses the file a second time, independently, so the comparison is the
+# caller's RESOLVED value against the file's DECLARED value — sourcing again
+# here would just reassign the same variables, telling us nothing.
+#
+# Absent file (a box that never ran bin/service-sync.sh) means no declared
+# deployment to diverge from, so the comparison falls back to the documented
+# defaults ($HOME/.local/state/herald, http://127.0.0.1:8880 — bin/lib.sh line
+# 47 and this script's own BASE_URL default above) instead of skipping the
+# check outright. That keeps a fresh machine self-consistent rather than
+# exempting every call from the guard just because service-sync.sh never ran.
+SERVICE_URL_DEFAULT="http://127.0.0.1:8881"
+
+# deployed_config_value <KEY> <DEFAULT>
+# One KEY=value line from the shared config file, read without sourcing it —
+# grep+cut is sufficient because bin/lib.sh's header constrains the format to
+# plain KEY=value with no shell.
+deployed_config_value() {
+  local key="$1" default="$2" file="$HERALD_CONFIG_DIR/config" line
+  if [ -r "$file" ]; then
+    line="$(grep -E "^${key}=" "$file" 2>/dev/null | tail -n1)"
+    [ -n "$line" ] && { printf '%s\n' "${line#*=}"; return 0; }
+  fi
+  printf '%s\n' "$default"
+}
+
+RESOLVED_STATE_DIR="$(herald_state_dir)"
+DEPLOYED_STATE_DIR="$(deployed_config_value HERALD_STATE_DIR "$HOME/.local/state/herald")"
+DEPLOYED_KOKORO_URL="$(deployed_config_value HERALD_KOKORO_BASE_URL "http://127.0.0.1:8880")"
+
+# Loopback default: like BASE_URL above, notify.sh and the service normally
+# colocate on the execution host — the tailnet bind exists for OTHER callers
+# (pi), not for this one. herald_config gives this the same env/config/default
+# precedence as every other setting here (AGENTS.md "No hardcoded host
+# addresses"). Resolved here (rather than inside "## Service attempt" below)
+# so the divergence gate above can compare against it before deciding whether
+# to enter that block at all.
+SERVICE_URL="$(herald_config NOTIFY_SERVICE_URL HERALD_NOTIFY_SERVICE_URL "$SERVICE_URL_DEFAULT")"
+SERVICE_URL="${SERVICE_URL%/}"
+SERVICE_CONNECT_TIMEOUT="$(herald_config NOTIFY_SERVICE_CONNECT_TIMEOUT HERALD_NOTIFY_SERVICE_CONNECT_TIMEOUT 2)"
+SERVICE_MAX_TIME="$(herald_config NOTIFY_SERVICE_TIMEOUT HERALD_NOTIFY_SERVICE_TIMEOUT 5)"
+
+PIPELINE_DIVERGES=0
+if [ "$SERVICE_URL" = "$SERVICE_URL_DEFAULT" ] && \
+   { [ "$RESOLVED_STATE_DIR" != "$DEPLOYED_STATE_DIR" ] || [ "$BASE_URL" != "$DEPLOYED_KOKORO_URL" ]; }; then
+  PIPELINE_DIVERGES=1
+  warn "resolved config diverges from the deployed pipeline (state dir: resolved=$RESOLVED_STATE_DIR deployed=$DEPLOYED_STATE_DIR; kokoro: resolved=$BASE_URL deployed=$DEPLOYED_KOKORO_URL) — bypassing the service, running locally same as --wait"
+fi
+
 # ── Service attempt ──────────────────────────────────────────────────────────
 # herald gained a resident service (tasks 1.4/1.5): POST /notify validates,
 # checks mute, enqueues, and returns in milliseconds — synthesis and delivery
@@ -139,17 +230,7 @@ export HERALD_KOKORO_BASE_URL="$BASE_URL"
 # newlines, unicode) and curl to speak HTTP; either missing degrades to the
 # local path exactly as if the service were unreachable — the same posture
 # record_unavailable_binary takes below on a missing herald binary.
-if [ "$WAIT" -eq 0 ] && command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
-  # Loopback default: like BASE_URL above, notify.sh and the service
-  # normally colocate on the execution host — the tailnet bind exists for
-  # OTHER callers (pi), not for this one. herald_config gives this the same
-  # env/config/default precedence as every other setting here (AGENTS.md
-  # "No hardcoded host addresses").
-  SERVICE_URL="$(herald_config NOTIFY_SERVICE_URL HERALD_NOTIFY_SERVICE_URL http://127.0.0.1:8881)"
-  SERVICE_URL="${SERVICE_URL%/}"
-  SERVICE_CONNECT_TIMEOUT="$(herald_config NOTIFY_SERVICE_CONNECT_TIMEOUT HERALD_NOTIFY_SERVICE_CONNECT_TIMEOUT 2)"
-  SERVICE_MAX_TIME="$(herald_config NOTIFY_SERVICE_TIMEOUT HERALD_NOTIFY_SERVICE_TIMEOUT 5)"
-
+if [ "$WAIT" -eq 0 ] && [ "$PIPELINE_DIVERGES" -eq 0 ] && command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
   REQUEST_JSON="$(jq -cn --arg text "$TEXT" --arg project "$PROJECT" '{text:$text, project:$project}')"
   SERVICE_META="$(curl -sS \
     --connect-timeout "$SERVICE_CONNECT_TIMEOUT" \
