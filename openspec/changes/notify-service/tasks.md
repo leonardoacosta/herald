@@ -63,7 +63,7 @@ stack: infra
       reachable but synthesis artificially slowed past the caller's bound, exactly ONE history
       record appears. Verify: test passes, and the slow-synthesis case fails if the endpoint is
       made synchronous.
-- [ ] 2.3 Bind-posture assertion: reachable on loopback and the tailnet address, absent
+- [x] 2.3 Bind-posture assertion: reachable on loopback and the tailnet address, absent
       elsewhere. Verify: test output showing both reachable and a third interface refused.
 - [x] 2.4 Cross-host proof: `curl` from the Mac over the tailnet produces audible speech and
       one history record. Verify: command + resulting history line pasted.
