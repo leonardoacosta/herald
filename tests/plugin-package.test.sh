@@ -27,9 +27,11 @@ fi
 
 CLAUDE_PLUGIN_ROOT="$PLUGIN" CLAUDE_ENV_FILE="$TMP/session-env" \
   "$PLUGIN/hooks-handlers/session-start.sh" > "$TMP/context.json"
-jq -e '.hookSpecificOutput.hookEventName == "SessionStart" and
-  (.hookSpecificOutput.additionalContext | contains("NON-NEGOTIABLE Closing Ritual"))' \
-  "$TMP/context.json" >/dev/null
+# The hook is PATH-only: cc selects the style natively, so injecting it as
+# SessionStart additionalContext would duplicate the same ~100 lines per session.
+[ ! -s "$TMP/context.json" ]
+# The style stays shippable as a source asset for operators without a native style.
+rg -q 'NON-NEGOTIABLE Closing Ritual' "$PLUGIN/output-styles/tts-summary.md"
 zsh -c 'source "$1"; command -v say_notify' _ "$TMP/session-env" | \
   rg -q '/plugin/bin/say_notify$'
 zsh -c 'source "$1"; command -v say_brief' _ "$TMP/session-env" | \
