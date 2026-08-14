@@ -1,0 +1,357 @@
+{
+  "schema": "herald.acceptance.v1",
+  "run_ts": "2026-08-14T19:59:40Z",
+  "nonce": "e2b6f5fe",
+  "live": true,
+  "duration_s": 45,
+  "exit_code": 0,
+  "alignment": {
+    "unit_state": "active",
+    "service_url": "http://127.0.0.1:8881",
+    "running_version": "610a27e",
+    "ondisk_version": "610a27e",
+    "binary": "/home/nyaptor/dev/personal/herald/bin/herald",
+    "state_dir": "/home/nyaptor/.local/state/herald",
+    "kokoro_base_url": "http://127.0.0.1:8880",
+    "playback_host": "mac",
+    "config_digest": "2f35f562b1f46f821ffeed6e06a07e802103131cc45bf4e40f568bfd873ee3ad",
+    "playback_host_reachable": true,
+    "passed": true,
+    "reasons": []
+  },
+  "boundary": {
+    "before": {
+      "reachable": true,
+      "spool_entries": [
+        "drainer.lock"
+      ],
+      "lock_pid": "31097",
+      "player_pid": "31097",
+      "player_current": "",
+      "served_by": "resident-player",
+      "player_log_tail": [
+        "16:25:33 herald-player: holding the spool lock (pid 31097), idle release after 900s"
+      ]
+    },
+    "after": {
+      "reachable": true,
+      "spool_entries": [
+        "drainer.lock"
+      ],
+      "lock_pid": "31097",
+      "player_pid": "31097",
+      "player_current": "",
+      "served_by": "resident-player",
+      "player_log_tail": [
+        "16:25:33 herald-player: holding the spool lock (pid 31097), idle release after 900s"
+      ]
+    }
+  },
+  "rows": [
+    {
+      "row": 9,
+      "name": "HTTP contract spot-checks",
+      "status": "pass",
+      "expected": "documented shapes for accepted (202+request_id), malformed (400), unknown (noop)",
+      "observed": "POST /notify empty text -> 400;POST /notify/stop malformed id -> 400;POST /notify/stop unknown id -> noop, stopped:false;POST /notify accepted -> 202 request_id 4fd5fc6e46c621b8e148a5ae9f7e6348;one terminal history row: delivered",
+      "evidence": {
+        "notify_malformed_code": "400",
+        "notify_malformed_body": {
+          "error": "notify: text is required"
+        },
+        "stop_malformed_code": "400",
+        "stop_unknown_body": {
+          "request_id": "ffffffffffffffffffffffffffffffff",
+          "status": "noop",
+          "stopped": false
+        },
+        "accepted_request_id": "4fd5fc6e46c621b8e148a5ae9f7e6348",
+        "accepted_history": [
+          {
+            "request_id": "4fd5fc6e46c621b8e148a5ae9f7e6348",
+            "ts": "2026-08-14T19:59:45.355263636Z",
+            "project": "",
+            "text": "herald acceptance e2b6f5fe row 9",
+            "voice": "kokoro:af_heart+af_bella(3)",
+            "speed": 0.95,
+            "outcome": "delivered"
+          }
+        ]
+      }
+    },
+    {
+      "row": 1,
+      "name": "plain notify via service",
+      "status": "pass",
+      "expected": "one delivered history row, clip served once",
+      "observed": "request_id 112ada4756bb27b16238dc0a6530729d delivered, exactly one terminal row",
+      "evidence": {
+        "request_id": "112ada4756bb27b16238dc0a6530729d",
+        "history": [
+          {
+            "request_id": "112ada4756bb27b16238dc0a6530729d",
+            "ts": "2026-08-14T19:59:51.006928019Z",
+            "project": "",
+            "text": "herald acceptance e2b6f5fe row 1",
+            "voice": "kokoro:af_heart+af_bella(3)",
+            "speed": 0.95,
+            "outcome": "delivered"
+          }
+        ],
+        "boundary": {
+          "served_by": "resident-player",
+          "lock_pid": "31097",
+          "player_pid": "31097"
+        }
+      }
+    },
+    {
+      "row": 2,
+      "name": "notify --wait local path",
+      "status": "pass",
+      "expected": "exits 0 within bound, one history row, no double-speak",
+      "observed": "rc=0, one delivered row",
+      "evidence": {
+        "exit_code": 0,
+        "history": [
+          {
+            "ts": "2026-08-14T19:59:56.762414028Z",
+            "project": "",
+            "text": "herald acceptance e2b6f5fe row 2",
+            "voice": "kokoro:af_heart+af_bella(3)",
+            "speed": 0.95,
+            "outcome": "delivered"
+          }
+        ]
+      }
+    },
+    {
+      "row": 3,
+      "name": "queued cancellation",
+      "status": "pass",
+      "expected": "canceled history row, no synthesis/delivery evidence",
+      "observed": "canceled: canceled during synthesis",
+      "evidence": {
+        "request_id": "d681d1338fc46f4cdcf7c44408b6ebe1",
+        "stop_response": {
+          "request_id": "d681d1338fc46f4cdcf7c44408b6ebe1",
+          "stage": "queued",
+          "status": "canceled",
+          "stopped": true
+        },
+        "history": [
+          {
+            "request_id": "d681d1338fc46f4cdcf7c44408b6ebe1",
+            "ts": "2026-08-14T19:59:57.793562361Z",
+            "project": "",
+            "text": "herald acceptance e2b6f5fe row 3",
+            "voice": "kokoro:af_heart+af_bella(3)",
+            "speed": 0.95,
+            "outcome": "canceled",
+            "reason": "canceled during synthesis"
+          }
+        ]
+      }
+    },
+    {
+      "row": 4,
+      "name": "active-playback cancellation",
+      "status": "pass",
+      "expected": "stopped with ownership proof, clip interrupted, one canceled row",
+      "observed": "stop -> {\"status\":\"canceled\",\"stage\":\"delivering\",\"stopped\":true}, A canceled",
+      "evidence": {
+        "a_request_id": "45cad841db770a251cbc54ac52c71219",
+        "b_request_id": "6fc3b0f387f4ba156b57d2cea178dddb",
+        "stop_response": {
+          "request_id": "45cad841db770a251cbc54ac52c71219",
+          "stage": "delivering",
+          "status": "canceled",
+          "stopped": true
+        },
+        "a_history": [
+          {
+            "request_id": "45cad841db770a251cbc54ac52c71219",
+            "ts": "2026-08-14T20:00:05.711178398Z",
+            "project": "",
+            "text": "herald acceptance e2b6f5fe row 4 this is a deliberately longer utterance so that cancellation lands while it is still playing on the host",
+            "voice": "kokoro:af_heart+af_bella(3)",
+            "speed": 0.95,
+            "outcome": "canceled",
+            "reason": "canceled during delivery"
+          }
+        ],
+        "b_history": [
+          {
+            "request_id": "6fc3b0f387f4ba156b57d2cea178dddb",
+            "ts": "2026-08-14T20:00:10.142211823Z",
+            "project": "",
+            "text": "herald acceptance e2b6f5fe row 5",
+            "voice": "kokoro:af_heart+af_bella(3)",
+            "speed": 0.95,
+            "outcome": "delivered"
+          }
+        ],
+        "boundary_at_stop": {
+          "reachable": true,
+          "spool_entries": [
+            "clip.CUySxP",
+            "clip.CUySxP.meta",
+            "drainer.lock"
+          ],
+          "lock_pid": "31097",
+          "player_pid": "31097",
+          "player_current": "45cad841db770a251cbc54ac52c71219",
+          "served_by": "resident-player",
+          "player_log_tail": [
+            "16:25:33 herald-player: holding the spool lock (pid 31097), idle release after 900s"
+          ]
+        }
+      }
+    },
+    {
+      "row": 5,
+      "name": "unrelated survival",
+      "status": "pass",
+      "expected": "B still plays completely, B has a delivered row",
+      "observed": "B 6fc3b0f387f4ba156b57d2cea178dddb delivered while A was canceled",
+      "evidence": {
+        "a_request_id": "45cad841db770a251cbc54ac52c71219",
+        "b_request_id": "6fc3b0f387f4ba156b57d2cea178dddb",
+        "stop_response": {
+          "request_id": "45cad841db770a251cbc54ac52c71219",
+          "stage": "delivering",
+          "status": "canceled",
+          "stopped": true
+        },
+        "a_history": [
+          {
+            "request_id": "45cad841db770a251cbc54ac52c71219",
+            "ts": "2026-08-14T20:00:05.711178398Z",
+            "project": "",
+            "text": "herald acceptance e2b6f5fe row 4 this is a deliberately longer utterance so that cancellation lands while it is still playing on the host",
+            "voice": "kokoro:af_heart+af_bella(3)",
+            "speed": 0.95,
+            "outcome": "canceled",
+            "reason": "canceled during delivery"
+          }
+        ],
+        "b_history": [
+          {
+            "request_id": "6fc3b0f387f4ba156b57d2cea178dddb",
+            "ts": "2026-08-14T20:00:10.142211823Z",
+            "project": "",
+            "text": "herald acceptance e2b6f5fe row 5",
+            "voice": "kokoro:af_heart+af_bella(3)",
+            "speed": 0.95,
+            "outcome": "delivered"
+          }
+        ],
+        "boundary_at_stop": {
+          "reachable": true,
+          "spool_entries": [
+            "clip.CUySxP",
+            "clip.CUySxP.meta",
+            "drainer.lock"
+          ],
+          "lock_pid": "31097",
+          "player_pid": "31097",
+          "player_current": "45cad841db770a251cbc54ac52c71219",
+          "served_by": "resident-player",
+          "player_log_tail": [
+            "16:25:33 herald-player: holding the spool lock (pid 31097), idle release after 900s"
+          ]
+        }
+      }
+    },
+    {
+      "row": 6,
+      "name": "stop idempotency / unknown ID",
+      "status": "pass",
+      "expected": "stable no-op, stopped:false, no new history rows",
+      "observed": "history stayed at 400 rows; unknown-ID stop reported stopped:false",
+      "evidence": {
+        "history_count_before": 400,
+        "history_count_after": 400,
+        "repeat_stop": {
+          "request_id": "45cad841db770a251cbc54ac52c71219",
+          "stage": "delivering",
+          "status": "canceled",
+          "stopped": false
+        },
+        "unknown_stop": {
+          "request_id": "0123456789abcdef0123456789abcdef",
+          "status": "noop",
+          "stopped": false
+        }
+      }
+    },
+    {
+      "row": 7,
+      "name": "serialization under concurrency",
+      "status": "pass",
+      "expected": "both delivered, never mixed, arrival order preserved",
+      "observed": "both delivered; spool drained serially (one lock holder observed)",
+      "evidence": {
+        "first_request_id": "2ca9ca3ae3fa255a8e5afcba9ffcaeb2",
+        "second_request_id": "0a4521425fb96f73b7c6394f7b1189f2",
+        "first_history": [
+          {
+            "request_id": "2ca9ca3ae3fa255a8e5afcba9ffcaeb2",
+            "ts": "2026-08-14T20:00:17.275548788Z",
+            "project": "",
+            "text": "herald acceptance e2b6f5fe row 7 first",
+            "voice": "kokoro:af_heart+af_bella(3)",
+            "speed": 0.95,
+            "outcome": "delivered"
+          }
+        ],
+        "second_history": [
+          {
+            "request_id": "0a4521425fb96f73b7c6394f7b1189f2",
+            "ts": "2026-08-14T20:00:22.27713414Z",
+            "project": "",
+            "text": "herald acceptance e2b6f5fe row 7 second",
+            "voice": "kokoro:af_heart+af_bella(3)",
+            "speed": 0.95,
+            "outcome": "delivered"
+          }
+        ]
+      }
+    },
+    {
+      "row": 8,
+      "name": "mute respected",
+      "status": "pass",
+      "expected": "muted history row, no playback, mute restored",
+      "observed": "muted row recorded, mute cleared afterwards",
+      "evidence": {
+        "request_id": "cfedbbb5b6c21d30e781a8a26e64950f",
+        "history": [
+          {
+            "request_id": "cfedbbb5b6c21d30e781a8a26e64950f",
+            "ts": "2026-08-14T20:00:23.565976083Z",
+            "project": "",
+            "text": "herald acceptance e2b6f5fe row 8",
+            "voice": "kokoro:af_heart+af_bella(3)",
+            "outcome": "muted",
+            "reason": "muted until 2026-08-14T15:01:23-05:00"
+          }
+        ],
+        "spool_during_mute": [
+          "drainer.lock"
+        ],
+        "muted_after_cleanup": "false"
+      }
+    }
+  ],
+  "notes": [
+    {
+      "note": "gate 0 passed (service 610a27e)"
+    },
+    {
+      "note": "delivery mode observed during this run: resident-player (the other mode is not-exercised; forcing it would require mutating the playback host)"
+    }
+  ],
+  "verdict": "pass",
+  "not_exercised": []
+}

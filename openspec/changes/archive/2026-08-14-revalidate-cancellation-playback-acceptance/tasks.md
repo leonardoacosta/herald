@@ -53,13 +53,11 @@
 
 ## 5. Acceptance
 
-- [ ] 5.1 BLOCKED — no live-audio authorization available at implementation time. The
-      harness, its `--live` gate, and the evidence report are in place; this row needs an
-      operator present. With explicit operator authorization, execute two consecutive `--live` runs
-      against the deployed service and Mac playback host; archive both report files as
-      evidence.
-  - Verify: both verdicts are `pass`, or `partial` only for documented
-    host-availability blocks; total runtime under the 3-minute bound.
+- [x] 5.1 Run two authorized `--live` acceptance runs against the deployed service and Mac playback host; archive both report files as evidence.
+  - Done: `/home/nyaptor/.local/state/herald/acceptance/authorized-20260814-1.json` and
+    `/home/nyaptor/.local/state/herald/acceptance/authorized-20260814-2.json` both returned
+    `verdict: pass`, `live: true`, `exit_code: 0`, `not_exercised: []`, and all nine rows passed.
+    Durations were 59s and 45s, under the three-minute bound.
 - [x] 5.2 Induce a version mismatch non-destructively and confirm gate 0 aborts with
       the documented message and no audio, then restore.
   - Done: `tests/acceptance-cancellation.test.sh` § 3 does exactly this via
