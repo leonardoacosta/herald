@@ -27,7 +27,7 @@ named, rerunnable acceptance validation that produces durable evidence that scop
 cancellation and serialized playback still work against the real deployed pipeline,
 not fakes.
 
-## What this change is
+## What Changes
 
 A validation harness (`tests/acceptance-cancellation.sh` or equivalent under `tests/`,
 name final at implementation) plus documentation that:
