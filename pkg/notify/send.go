@@ -67,7 +67,7 @@ type Synthesizer func(ctx context.Context, text string, v Voice) ([]byte, error)
 // implementation resolves per call from the environment (see
 // resolvePlaybackConfig), exactly as ResolveBaseURL is read fresh by every
 // caller rather than captured once at construction time.
-type DeliverFunc func(ctx context.Context, audioPath string) (DeliveryResult, error)
+type DeliverFunc func(ctx context.Context, audioPath string, requestIDs ...string) (DeliveryResult, error)
 
 // PlaybackHostEnv and PlaybackTimeoutEnv are the Go-side overrides for the
 // send path's delivery leg. bin/notify.sh reads the equivalent values
@@ -170,8 +170,12 @@ func defaultSynthesize(ctx context.Context, text string, v Voice) ([]byte, error
 // defaultSynthesize resolves its client fresh: the send path must observe
 // env changes without a restart, matching every other resolver in this
 // package (ResolveBaseURL, ResolveStateDir, ResolveBindConfig).
-func defaultDeliver(ctx context.Context, audioPath string) (DeliveryResult, error) {
-	return Deliver(ctx, resolvePlaybackConfig(), audioPath)
+func defaultDeliver(ctx context.Context, audioPath string, requestIDs ...string) (DeliveryResult, error) {
+	requestID := ""
+	if len(requestIDs) > 0 {
+		requestID = requestIDs[0]
+	}
+	return Deliver(ctx, resolvePlaybackConfig(), audioPath, requestID)
 }
 
 // resolvePlaybackConfig reads PlaybackHostEnv/PlaybackTimeoutEnv. An unset
@@ -430,7 +434,7 @@ func (q *SendQueue) process(job sendJob) {
 	// even be MADE (config, unreadable audio), which DeliveryResult already
 	// encodes as a record-worthy outcome too. So the error is deliberately
 	// not branched on here; the result is what the record cares about.
-	result, _ := q.deliver(ctx, audioPath)
+	result, _ := q.deliver(ctx, audioPath, job.ID)
 	_ = AppendRecord(dir, Record{
 		RequestID: job.ID,
 		Project:   job.Project, Text: job.Text, Voice: voice.String(), Speed: voice.Speed,

@@ -153,8 +153,31 @@ enqueue "queued-behind-live-owner"
 sleep 0.6
 STARTED=$(grep -c '^START' "$LOG" || true)
 kill "$LIVE" 2>/dev/null || true
+wait "$LIVE" 2>/dev/null || true
 [ "$STARTED" -eq 0 ] || {
   echo "a second drainer was elected while one held the lock" >&2; exit 1; }
 rm -rf "$SPOOL/drainer.lock"
+rm -f "$SPOOL"/clip.* 2>/dev/null || true
+
+# ── 5. Request metadata is atomic and pending cancellation is scoped ──────────
+: > "$LOG"
+RID1=11111111111111111111111111111111
+RID2=22222222222222222222222222222222
+sleep 300 & LIVE=$!
+mkdir -p "$SPOOL/drainer.lock"
+printf '%s\n' "$LIVE" > "$SPOOL/drainer.lock/pid"
+printf '%s' "clip-1" | HERALD_REQUEST_ID="$RID1" sh "$TMP/remote.sh"
+printf '%s' "clip-2" | HERALD_REQUEST_ID="$RID2" sh "$TMP/remote.sh"
+META1=$(grep -l "$RID1" "$SPOOL"/clip.*.meta 2>/dev/null || true)
+[ -n "$META1" ] || { echo "request metadata was not published with the clip" >&2; ls -la "$SPOOL" >&2; exit 1; }
+HERALD_STOP_REQUEST_ID="$RID1" sh "$TMP/remote.sh" </dev/null
+[ ! -e "${META1%.meta}" ] && [ ! -e "$META1" ] || { echo "pending cancellation did not remove the matching clip" >&2; exit 1; }
+grep -l "$RID2" "$SPOOL"/clip.*.meta >/dev/null 2>&1 || { echo "pending cancellation removed an unrelated clip" >&2; exit 1; }
+kill "$LIVE" 2>/dev/null || true
+wait "$LIVE" 2>/dev/null || true
+rm -rf "$SPOOL/drainer.lock"
+enqueue "clip-3"
+wait_for_clips 2
+grep -q 'clip-2' "$LOG" || { echo "uncanceled clip did not play" >&2; cat "$LOG" >&2; exit 1; }
 
 echo "spool drainer: burst, mid-playback arrival, stale-lock recovery, and live-owner deference passed"

@@ -16,7 +16,7 @@ import (
 // Constraint 2. This is invisible to any behavioural test that happens to run
 // against a reachable host: with -n the ssh exits 0 and nothing plays.
 func TestDeliveryNeverPassesDashN(t *testing.T) {
-	for _, arg := range DeliverySSHArgs("somehost") {
+	for _, arg := range DeliverySSHArgs("somehost", "") {
 		if arg == "-n" {
 			t.Fatal("delivery passed `ssh -n`, which discards the piped audio: exit 0, no sound, no error")
 		}
@@ -24,7 +24,7 @@ func TestDeliveryNeverPassesDashN(t *testing.T) {
 }
 
 func TestDeliveryUsesBatchModeSoItNeverPromptsForAPassword(t *testing.T) {
-	joined := strings.Join(DeliverySSHArgs("somehost"), " ")
+	joined := strings.Join(DeliverySSHArgs("somehost", ""), " ")
 	if !strings.Contains(joined, "BatchMode=yes") {
 		t.Errorf("delivery argv lacks BatchMode=yes: %s", joined)
 	}
@@ -39,7 +39,7 @@ func TestRemoteScriptKeepsRenameAfterCompleteAndTheTrapWindow(t *testing.T) {
 	if !strings.Contains(remoteSpoolScript, `mv "$tmp" "$clip"`) {
 		t.Error("remote script does not rename into the spool after the bytes land")
 	}
-	if !strings.Contains(remoteSpoolScript, `trap 'rm -f "$tmp"' EXIT INT TERM`) {
+	if !strings.Contains(remoteSpoolScript, `trap 'rm -f "$tmp" "$meta_tmp"' EXIT INT TERM`) {
 		t.Error("remote script lost the trap covering mktemp-to-bytes-landed")
 	}
 	if !strings.Contains(remoteSpoolScript, "trap - EXIT INT TERM") {
@@ -70,7 +70,7 @@ func TestUnreachableHostTimesOutWithinTheBoundAndRecordsItsOwnOutcome(t *testing
 	cfg := DeliveryConfig{PlaybackHost: "192.0.2.1", Timeout: 2 * time.Second}
 
 	start := time.Now()
-	res, err := Deliver(context.Background(), cfg, audio)
+	res, err := Deliver(context.Background(), cfg, audio, "")
 	elapsed := time.Since(start)
 
 	if err != nil {
@@ -92,7 +92,7 @@ func TestDeliveryWithoutAPlaybackHostIsRefusedNotGuessed(t *testing.T) {
 	if err := os.WriteFile(audio, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	res, err := Deliver(context.Background(), DeliveryConfig{}, audio)
+	res, err := Deliver(context.Background(), DeliveryConfig{}, audio, "")
 	if err == nil {
 		t.Fatal("empty playback host was accepted; AGENTS.md forbids a baked-in default")
 	}
@@ -104,7 +104,7 @@ func TestDeliveryWithoutAPlaybackHostIsRefusedNotGuessed(t *testing.T) {
 func TestDeliveryReportsUnreadableAudioRatherThanSendingNothing(t *testing.T) {
 	res, err := Deliver(context.Background(),
 		DeliveryConfig{PlaybackHost: "somehost", Timeout: time.Second},
-		filepath.Join(t.TempDir(), "does-not-exist.mp3"))
+		filepath.Join(t.TempDir(), "does-not-exist.mp3"), "")
 	if err == nil {
 		t.Fatal("missing audio file was accepted")
 	}

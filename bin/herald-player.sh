@@ -42,6 +42,7 @@ WAKE="$SPOOL/.wake"
 # Published so enqueue can tell a resident player (which listens on $WAKE) from
 # a fallback drainer (which does not, and must never be signalled or written to).
 PIDFILE="$SPOOL/.player.pid"
+CURRENT="$SPOOL/.player.current"
 # Control channel is two fifos, and completion is read with a BLOCKING read
 # rather than polled from a file. Polling is what launchd punishes: under the
 # agent, `sleep 0.02` in the completion loop is coalesced into something far
@@ -190,6 +191,15 @@ play() {
   done
 }
 
+clip_request_id() {
+  local meta="$1.meta" rid=""
+  [ -f "$meta" ] || return 0
+  IFS= read -r rid < "$meta" || rid=""
+  case "$rid" in
+    ???????????????????????????????? ) printf '%s\n' "$rid" ;;
+  esac
+}
+
 # Release the lock only if we still OWN it. Checking $HELD alone is not enough:
 # `launchctl kickstart -k` starts the replacement before the outgoing process
 # has finished exiting, so a bare `rm -rf` here deletes the SUCCESSOR's lock.
@@ -202,6 +212,7 @@ cleanup() {
   # Retract the wake channel BEFORE releasing the lock: an enqueue that still
   # sees a live pidfile would otherwise write to a fifo with no reader.
   [ "$(cat "$PIDFILE" 2>/dev/null)" = "$$" ] && rm -f "$PIDFILE"
+  rm -f "$CURRENT"
   exec 5<&- 2>/dev/null || true
   rm -f "$WAKE"
   if [ "$HELD" = 1 ] && [ "$(cat "$LOCK/pid" 2>/dev/null)" = "$$" ]; then
@@ -241,17 +252,19 @@ while :; do
   fi
 
   # shellcheck disable=SC2012  # controlled filenames; -tr is mtime order
-  batch=$(ls -tr "$SPOOL"/clip.* 2>/dev/null)
+  batch=$(find "$SPOOL" -maxdepth 1 -type f -name 'clip.*' ! -name '*.meta' -print 2>/dev/null | sort)
   if [ -n "$batch" ]; then
     t_detect=$(ms)
     start_player || { sleep 1; continue; }
     t_ready=$(ms)
     for clip in $batch; do
       [ -e "$clip" ] || continue
+      rid="$(clip_request_id "$clip")"
+      if [ -n "$rid" ]; then printf '%s\n' "$rid" > "$CURRENT"; else rm -f "$CURRENT"; fi
       t0=$(ms)
       play "$clip" || { log "playback failed; restarting the decoder"; stop_player; }
       t1=$(ms)
-      rm -f "$clip"
+      rm -f "$clip" "$clip.meta" "$CURRENT"
       dbg "clip: start_player $((t_ready - t_detect))ms, play $((t1 - t0))ms"
     done
     # Resume silence immediately so the device stays awake for whatever lands next.

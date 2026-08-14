@@ -67,7 +67,7 @@ func failIfCalledSynthesize(t *testing.T) Synthesizer {
 }
 
 func failIfCalledDeliver(t *testing.T) DeliverFunc {
-	return func(context.Context, string) (DeliveryResult, error) {
+	return func(context.Context, string, ...string) (DeliveryResult, error) {
 		t.Error("delivery invoked for a request that should never have reached delivery")
 		return DeliveryResult{}, errors.New("must not be called")
 	}
@@ -87,7 +87,7 @@ func TestNotifyHandlerReturnsQuicklyWhileSynthesisIsSlow(t *testing.T) {
 			time.Sleep(synthDelay)
 			return []byte("audio"), nil
 		},
-		Deliver: func(context.Context, string) (DeliveryResult, error) {
+		Deliver: func(context.Context, string, ...string) (DeliveryResult, error) {
 			return DeliveryResult{Outcome: OutcomeDelivered}, nil
 		},
 	})
@@ -127,7 +127,7 @@ func TestNotifyHandlerDoesNotRecordUntilSynthesisReleases(t *testing.T) {
 			<-release
 			return []byte("audio"), nil
 		},
-		Deliver: func(context.Context, string) (DeliveryResult, error) {
+		Deliver: func(context.Context, string, ...string) (DeliveryResult, error) {
 			return DeliveryResult{Outcome: OutcomeDelivered}, nil
 		},
 	})
@@ -231,7 +231,7 @@ func TestNotifyHandlerRecordsExactlyOnceForEachOutcome(t *testing.T) {
 					}
 					return []byte("audio"), nil
 				},
-				Deliver: func(context.Context, string) (DeliveryResult, error) {
+				Deliver: func(context.Context, string, ...string) (DeliveryResult, error) {
 					deliverCalls.Add(1)
 					return tc.deliverResult, nil
 				},
@@ -338,7 +338,7 @@ func TestNotifyHandlerFullQueueStillRecordsExactlyOnceAndReturnsNonOK(t *testing
 			<-release
 			return []byte("audio"), nil
 		},
-		Deliver: func(context.Context, string) (DeliveryResult, error) {
+		Deliver: func(context.Context, string, ...string) (DeliveryResult, error) {
 			return DeliveryResult{Outcome: OutcomeDelivered}, nil
 		},
 	})
@@ -409,7 +409,7 @@ func TestNotifyHandlerReadsCurrentMuteState(t *testing.T) {
 	var deliverCalls atomic.Int32
 	q := NewSendQueue(SendQueueOptions{
 		Synthesize: func(context.Context, string, Voice) ([]byte, error) { return []byte("audio"), nil },
-		Deliver: func(context.Context, string) (DeliveryResult, error) {
+		Deliver: func(context.Context, string, ...string) (DeliveryResult, error) {
 			deliverCalls.Add(1)
 			return DeliveryResult{Outcome: OutcomeDelivered}, nil
 		},

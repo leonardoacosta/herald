@@ -72,7 +72,11 @@ type DeliveryResult struct {
 // attempt could not be made at all (no host configured, unreadable audio), which
 // the caller still records — as OutcomeTransportFailed — but which is a
 // different class from "we tried and the host was asleep".
-func Deliver(ctx context.Context, cfg DeliveryConfig, audioPath string) (DeliveryResult, error) {
+func Deliver(ctx context.Context, cfg DeliveryConfig, audioPath string, requestIDs ...string) (DeliveryResult, error) {
+	requestID := ""
+	if len(requestIDs) > 0 {
+		requestID = requestIDs[0]
+	}
 	host := strings.TrimSpace(cfg.PlaybackHost)
 	if host == "" {
 		return DeliveryResult{Outcome: OutcomeTransportFailed, Reason: ErrNoPlaybackHost.Error()}, ErrNoPlaybackHost
@@ -92,7 +96,7 @@ func Deliver(ctx context.Context, cfg DeliveryConfig, audioPath string) (Deliver
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "ssh", DeliverySSHArgs(host)...)
+	cmd := exec.CommandContext(ctx, "ssh", DeliverySSHArgs(host, requestID)...)
 	// Constraint 2: stdin carries the audio. Never /dev/null, never `-n`.
 	cmd.Stdin = bytes.NewReader(audio)
 	var stderr bytes.Buffer
@@ -124,8 +128,36 @@ func Deliver(ctx context.Context, cfg DeliveryConfig, audioPath string) (Deliver
 // DeliverySSHArgs builds the ssh argv. Exported so a test can assert the shape
 // — specifically that `-n` never appears (constraint 2), which is invisible in
 // any behavioural test that happens to run against a reachable host.
-func DeliverySSHArgs(host string) []string {
-	return []string{"-o", "BatchMode=yes", host, remoteSpoolScript}
+func DeliverySSHArgs(host string, requestIDs ...string) []string {
+	requestID := ""
+	if len(requestIDs) > 0 {
+		requestID = requestIDs[0]
+	}
+	remote := remoteSpoolScript
+	if validRequestID(requestID) {
+		remote = fmt.Sprintf("HERALD_REQUEST_ID=%s\n%s", requestID, remoteSpoolScript)
+	}
+	return []string{"-o", "BatchMode=yes", host, remote}
+}
+
+func StopRemoteRequest(ctx context.Context, cfg DeliveryConfig, requestID string) bool {
+	if !validRequestID(requestID) {
+		return false
+	}
+	host := strings.TrimSpace(cfg.PlaybackHost)
+	if host == "" {
+		return false
+	}
+	timeout := cfg.Timeout
+	if timeout <= 0 {
+		timeout = DefaultPlaybackTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	remote := fmt.Sprintf("HERALD_STOP_REQUEST_ID=%s\n%s", requestID, remoteSpoolScript)
+	cmd := exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", host, remote)
+	cmd.Stdin = strings.NewReader("")
+	return cmd.Run() == nil && ctx.Err() == nil
 }
 
 // remoteSpoolScript is the shell run ON the playback host: enqueue into the
