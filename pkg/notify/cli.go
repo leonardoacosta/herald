@@ -51,7 +51,7 @@ func RunCLI(args []string) int {
 
 func runCLI(args []string, stdout, stderr io.Writer) int {
 	if len(args) < 1 {
-		fmt.Fprintln(stderr, "usage: herald notify <synth|record|voices|catalog|set|reset|audition|status|history|mute|unmute|serve> ...")
+		fmt.Fprintln(stderr, "usage: herald notify <synth|record|voices|catalog|set|reset|audition|status|history|mute|unmute|stop|serve> ...")
 		return 1
 	}
 	switch args[0] {
@@ -77,12 +77,36 @@ func runCLI(args []string, stdout, stderr io.Writer) int {
 		return runMute(args[1:], stdout, stderr)
 	case "unmute":
 		return runUnmute(args[1:], stdout, stderr)
+	case "stop":
+		return runStop(args[1:], stdout, stderr)
 	case "serve":
 		return runServe(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "herald notify: unknown subcommand %q\n", args[0])
 		return 1
 	}
+}
+
+func runStop(args []string, stdout, stderr io.Writer) int {
+	fs := flagsOf("notify stop", stderr)
+	jsonOut := fs.Bool("json", true, "emit JSON")
+	if err := fs.Parse(args); err != nil || fs.NArg() != 1 || !validRequestID(fs.Arg(0)) {
+		fmt.Fprintln(stderr, "notify stop: one valid request ID is required")
+		return 1
+	}
+	id := fs.Arg(0)
+	state, ok := defaultRequests.get(id)
+	if !ok {
+		if *jsonOut {
+			_ = json.NewEncoder(stdout).Encode(map[string]any{"status": "noop", "request_id": id, "stopped": false})
+		}
+		return 0
+	}
+	stage, changed := state.stop()
+	if *jsonOut {
+		_ = json.NewEncoder(stdout).Encode(map[string]any{"status": "canceled", "request_id": id, "stage": stage, "stopped": changed})
+	}
+	return 0
 }
 
 // flagsOf builds a FlagSet that reports errors through w and never calls

@@ -59,6 +59,7 @@ const (
 	OutcomeSynthFailed      = "synth_failed"
 	OutcomeTransportFailed  = "transport_failed"
 	OutcomeTransportTimeout = "transport_timeout"
+	OutcomeCanceled         = "canceled"
 )
 
 // MaxRecordedText caps the text carried in a history record, in runes.
@@ -89,7 +90,7 @@ func truncateRecordedText(s string) string {
 // cannot render.
 func ValidOutcome(s string) bool {
 	switch s {
-	case OutcomeDelivered, OutcomeMuted, OutcomeSynthFailed, OutcomeTransportFailed, OutcomeTransportTimeout:
+	case OutcomeDelivered, OutcomeMuted, OutcomeSynthFailed, OutcomeTransportFailed, OutcomeTransportTimeout, OutcomeCanceled:
 		return true
 	}
 	return false
@@ -191,13 +192,14 @@ func (v Voices) MarshalJSON() ([]byte, error) {
 // Reason is omitempty because a delivered record has nothing to explain;
 // every non-delivered outcome is expected to carry one.
 type Record struct {
-	TS      time.Time `json:"ts"`
-	Project string    `json:"project"`
-	Text    string    `json:"text"`
-	Voice   string    `json:"voice"`
-	Speed   float64   `json:"speed,omitempty"`
-	Outcome string    `json:"outcome"`
-	Reason  string    `json:"reason,omitempty"`
+	RequestID string    `json:"request_id,omitempty"`
+	TS        time.Time `json:"ts"`
+	Project   string    `json:"project"`
+	Text      string    `json:"text"`
+	Voice     string    `json:"voice"`
+	Speed     float64   `json:"speed,omitempty"`
+	Outcome   string    `json:"outcome"`
+	Reason    string    `json:"reason,omitempty"`
 }
 
 // ResolveStateDir returns the directory holding the notify state files:

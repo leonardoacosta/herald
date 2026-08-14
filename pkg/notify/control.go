@@ -64,10 +64,35 @@ const defaultHistoryN = 10
 // (task 1.6's whole footprint there, matching how 1.5 added its own single
 // line for /notify).
 func registerControlHandlers(mux *http.ServeMux) {
+	mux.HandleFunc("/notify/stop", handleStop)
 	mux.HandleFunc("/mute", handleMute)
 	mux.HandleFunc("/unmute", handleUnmute)
 	mux.HandleFunc("/status", handleStatus)
 	mux.HandleFunc("/history", handleHistory)
+}
+
+type stopRequest struct {
+	RequestID string `json:"request_id"`
+}
+
+func handleStop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		writeNotifyJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST only"})
+		return
+	}
+	var body stopRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxNotifyBodyBytes)).Decode(&body); err != nil || !validRequestID(body.RequestID) {
+		writeNotifyJSON(w, http.StatusBadRequest, map[string]string{"error": "notify: valid request_id is required"})
+		return
+	}
+	state, ok := defaultRequests.get(body.RequestID)
+	if !ok {
+		writeJSON(w, http.StatusOK, map[string]any{"status": "noop", "request_id": body.RequestID, "stopped": false})
+		return
+	}
+	stage, changed := state.stop()
+	writeJSON(w, http.StatusOK, map[string]any{"status": "canceled", "request_id": body.RequestID, "stage": stage, "stopped": changed})
 }
 
 // muteRequest is POST /mute's wire body.

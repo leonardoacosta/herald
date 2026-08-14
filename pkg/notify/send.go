@@ -101,6 +101,7 @@ const DefaultSendQueueCapacity = 32
 // mute state the caller's request actually observed, rather than whatever
 // state happens to hold whenever the worker gets around to this job.
 type sendJob struct {
+	ID         string
 	Project    string
 	Text       string
 	Muted      bool
@@ -122,6 +123,8 @@ type SendQueue struct {
 	synthesize Synthesizer
 	deliver    DeliverFunc
 }
+
+var defaultRequests = newRequestRegistry()
 
 // NewSendQueue builds a queue and starts its worker. The worker runs for
 // the lifetime of the process — there is no Close, matching Server's own
@@ -262,10 +265,16 @@ func (q *SendQueue) HandleNotify(w http.ResponseWriter, r *http.Request) {
 		muted, until = false, time.Time{}
 	}
 
-	job := sendJob{Project: project, Text: text, Muted: muted, MutedUntil: until}
+	id, idErr := newRequestID()
+	if idErr != nil {
+		writeNotifyJSON(w, http.StatusInternalServerError, map[string]string{"error": idErr.Error()})
+		return
+	}
+	defaultRequests.add(id)
+	job := sendJob{ID: id, Project: project, Text: text, Muted: muted, MutedUntil: until}
 	select {
 	case q.jobs <- job:
-		writeNotifyJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
+		writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted", "request_id": id})
 	default:
 		// The queue is full. Unlike the 400s above, this request WAS valid
 		// and WAS never delivered — that is a herald-side failure an
@@ -327,6 +336,15 @@ func (q *SendQueue) run() {
 // acceptable trade against the alternative of a wedged worker silencing
 // every notification after it.
 func (q *SendQueue) process(job sendJob) {
+	state, _ := defaultRequests.get(job.ID)
+	if state != nil {
+		state.setStage("queued")
+		select {
+		case <-state.cancel:
+			return
+		default:
+		}
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Fprintf(os.Stderr, "notify: send worker recovered from a panic processing project=%q: %v\n", job.Project, r)
