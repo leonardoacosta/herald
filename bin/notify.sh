@@ -232,12 +232,18 @@ fi
 # record_unavailable_binary takes below on a missing herald binary.
 if [ "$WAIT" -eq 0 ] && [ "$PIPELINE_DIVERGES" -eq 0 ] && command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
   REQUEST_JSON="$(jq -cn --arg text "$TEXT" --arg project "$PROJECT" '{text:$text, project:$project}')"
+  RESPONSE_FILE="${HERALD_REQUEST_ID_FILE:-}"
+  if [ -n "$RESPONSE_FILE" ]; then
+    RESPONSE_ARG=(-o "$RESPONSE_FILE")
+  else
+    RESPONSE_ARG=(-o /dev/null)
+  fi
   SERVICE_META="$(curl -sS \
     --connect-timeout "$SERVICE_CONNECT_TIMEOUT" \
     --max-time "$SERVICE_MAX_TIME" \
     -H 'Content-Type: application/json' \
     --data-binary "$REQUEST_JSON" \
-    -o /dev/null \
+    "${RESPONSE_ARG[@]}" \
     -w '%{http_code} %{time_connect}' \
     "$SERVICE_URL/notify" 2>/dev/null)"
   CURL_RC=$?
@@ -260,6 +266,10 @@ if [ "$WAIT" -eq 0 ] && [ "$PIPELINE_DIVERGES" -eq 0 ] && command -v curl >/dev/
   if [ "$UNREACHABLE" -eq 0 ]; then
     case "$HTTP_CODE" in
       2??)
+        if [ -n "$RESPONSE_FILE" ] && command -v jq >/dev/null 2>&1; then
+          jq -r '.request_id // empty' "$RESPONSE_FILE" > "${RESPONSE_FILE}.id" 2>/dev/null || true
+          mv -f "${RESPONSE_FILE}.id" "$RESPONSE_FILE" 2>/dev/null || true
+        fi
         echo "notify: service accepted (HTTP $HTTP_CODE) at $SERVICE_URL, delivery async"
         ;;
       *)
