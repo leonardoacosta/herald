@@ -1,6 +1,7 @@
 package notify
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -21,11 +22,13 @@ func newRequestID() (string, error) {
 func validRequestID(id string) bool { return requestIDPattern.MatchString(id) }
 
 type requestState struct {
-	id       string
-	cancel   chan struct{}
-	mu       sync.Mutex
-	stage    string
-	terminal bool
+	id            string
+	cancel        chan struct{}
+	ctx           context.Context
+	cancelContext context.CancelFunc
+	mu            sync.Mutex
+	stage         string
+	terminal      bool
 }
 
 func (s *requestState) setStage(stage string) {
@@ -48,6 +51,9 @@ func (s *requestState) stop() (string, bool) {
 	}
 	s.terminal = true
 	close(s.cancel)
+	if s.cancelContext != nil {
+		s.cancelContext()
+	}
 	return s.stage, true
 }
 
@@ -61,7 +67,8 @@ func newRequestRegistry() *requestRegistry {
 	return &requestRegistry{items: map[string]*requestState{}}
 }
 func (r *requestRegistry) add(id string) *requestState {
-	s := &requestState{id: id, cancel: make(chan struct{}), stage: "accepted"}
+	ctx, cancel := context.WithCancel(context.Background())
+	s := &requestState{id: id, cancel: make(chan struct{}), ctx: ctx, cancelContext: cancel, stage: "accepted"}
 	r.mu.Lock()
 	r.items[id] = s
 	r.mu.Unlock()

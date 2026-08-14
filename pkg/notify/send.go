@@ -295,11 +295,12 @@ func (q *SendQueue) HandleNotify(w http.ResponseWriter, r *http.Request) {
 			voice = v.String()
 		}
 		_ = AppendRecord(dir, Record{
-			Project: project,
-			Text:    text,
-			Voice:   voice,
-			Outcome: OutcomeSynthFailed,
-			Reason:  fmt.Sprintf("send queue full (capacity %d): dropped before synthesis", cap(q.jobs)),
+			RequestID: job.ID,
+			Project:   project,
+			Text:      text,
+			Voice:     voice,
+			Outcome:   OutcomeSynthFailed,
+			Reason:    fmt.Sprintf("send queue full (capacity %d): dropped before synthesis", cap(q.jobs)),
 		})
 		writeNotifyJSON(w, http.StatusServiceUnavailable, map[string]string{
 			"error": "notify: send queue is full, try again shortly",
@@ -341,6 +342,7 @@ func (q *SendQueue) process(job sendJob) {
 		state.setStage("queued")
 		select {
 		case <-state.cancel:
+			_ = AppendRecord(ResolveStateDir(), Record{RequestID: job.ID, Project: job.Project, Text: job.Text, Outcome: OutcomeCanceled, Reason: "canceled before synthesis"})
 			return
 		default:
 		}
@@ -365,11 +367,12 @@ func (q *SendQueue) process(job sendJob) {
 			voice = v.String()
 		}
 		_ = AppendRecord(dir, Record{
-			Project: job.Project,
-			Text:    job.Text,
-			Voice:   voice,
-			Outcome: OutcomeMuted,
-			Reason:  fmt.Sprintf("muted until %s", job.MutedUntil.Format(time.RFC3339)),
+			RequestID: job.ID,
+			Project:   job.Project,
+			Text:      job.Text,
+			Voice:     voice,
+			Outcome:   OutcomeMuted,
+			Reason:    fmt.Sprintf("muted until %s", job.MutedUntil.Format(time.RFC3339)),
 		})
 		return
 	}
@@ -383,6 +386,9 @@ func (q *SendQueue) process(job sendJob) {
 	// DeliveryConfig.Timeout), so this call is not unbounded despite the
 	// background context.
 	ctx := context.Background()
+	if state != nil && state.ctx != nil {
+		ctx = state.ctx
+	}
 
 	// Resolve-first, exactly as runSynth does: on failure it still prints
 	// DefaultVoice rather than "unknown" (cli.go), because a typo'd
@@ -391,7 +397,8 @@ func (q *SendQueue) process(job sendJob) {
 	voice, err := ResolveVoice(dir, job.Project)
 	if err != nil {
 		_ = AppendRecord(dir, Record{
-			Project: job.Project, Text: job.Text, Voice: DefaultVoice,
+			RequestID: job.ID,
+			Project:   job.Project, Text: job.Text, Voice: DefaultVoice,
 			Outcome: OutcomeSynthFailed, Reason: err.Error(),
 		})
 		return
@@ -400,7 +407,8 @@ func (q *SendQueue) process(job sendJob) {
 	audio, err := q.synthesize(ctx, job.Text, voice)
 	if err != nil {
 		_ = AppendRecord(dir, Record{
-			Project: job.Project, Text: job.Text, Voice: voice.String(), Speed: voice.Speed,
+			RequestID: job.ID,
+			Project:   job.Project, Text: job.Text, Voice: voice.String(), Speed: voice.Speed,
 			Outcome: OutcomeSynthFailed, Reason: err.Error(),
 		})
 		return
@@ -424,7 +432,8 @@ func (q *SendQueue) process(job sendJob) {
 	// not branched on here; the result is what the record cares about.
 	result, _ := q.deliver(ctx, audioPath)
 	_ = AppendRecord(dir, Record{
-		Project: job.Project, Text: job.Text, Voice: voice.String(), Speed: voice.Speed,
+		RequestID: job.ID,
+		Project:   job.Project, Text: job.Text, Voice: voice.String(), Speed: voice.Speed,
 		Outcome: result.Outcome, Reason: result.Reason,
 	})
 }
