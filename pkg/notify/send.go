@@ -451,6 +451,9 @@ func (q *SendQueue) process(job sendJob) {
 	// encodes as a record-worthy outcome too. So the error is deliberately
 	// not branched on here; the result is what the record cares about.
 	result, _ := q.deliver(ctx, audioPath, job.ID)
+	if state != nil && state.finalize() {
+		result = DeliveryResult{Outcome: OutcomeCanceled, Reason: "canceled during delivery"}
+	}
 	_ = AppendRecord(dir, Record{
 		RequestID: job.ID,
 		Project:   job.Project, Text: job.Text, Voice: voice.String(), Speed: voice.Speed,

@@ -57,6 +57,22 @@ func (s *requestState) stop() (string, bool) {
 	return s.stage, true
 }
 
+// finalize claims the terminal outcome before the worker appends its history
+// record. A stop racing delivery must win if it reaches this lock first; a
+// stop arriving after finalize has claimed completion is a post-delivery noop.
+// This closes the window where stop reported delivering/canceled while the
+// worker subsequently appended delivered.
+func (s *requestState) finalize() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.terminal {
+		return true
+	}
+	s.terminal = true
+	s.stage = "completed"
+	return false
+}
+
 // requestRegistry owns accepted request cancellation signals for the daemon lifetime.
 type requestRegistry struct {
 	mu    sync.Mutex

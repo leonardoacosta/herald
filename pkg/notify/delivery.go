@@ -135,7 +135,13 @@ func DeliverySSHArgs(host string, requestIDs ...string) []string {
 	}
 	remote := remoteSpoolScript
 	if validRequestID(requestID) {
-		remote = fmt.Sprintf("HERALD_REQUEST_ID=%s\n%s", requestID, remoteSpoolScript)
+		// The service must not finalize history when bytes merely reached the
+		// spool. Waiting keeps the request in the delivering stage until the
+		// resident player or fallback drainer removes the clip, so stop can
+		// interrupt physical playback rather than racing a premature delivered
+		// record. The fire-and-forget shell pipe does not use this path unless its
+		// explicit --wait mode sets the same contract.
+		remote = fmt.Sprintf("HERALD_REQUEST_ID=%s HERALD_WAIT=1\n%s", requestID, remoteSpoolScript)
 	}
 	return []string{"-o", "BatchMode=yes", host, remote}
 }

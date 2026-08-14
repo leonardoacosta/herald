@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -254,6 +255,54 @@ func TestNotifyHandlerRecordsExactlyOnceForEachOutcome(t *testing.T) {
 					got, tc.wantDeliverCalls, tc.name)
 			}
 		})
+	}
+}
+
+func TestNotifyHandlerStopDuringDeliveryRecordsCanceled(t *testing.T) {
+	dir := setupSendTestState(t)
+	deliveryStarted := make(chan struct{})
+	releaseDelivery := make(chan struct{})
+	q := NewSendQueue(SendQueueOptions{
+		Synthesize: func(context.Context, string, Voice) ([]byte, error) {
+			return []byte("audio"), nil
+		},
+		Deliver: func(context.Context, string, ...string) (DeliveryResult, error) {
+			close(deliveryStarted)
+			<-releaseDelivery
+			return DeliveryResult{Outcome: OutcomeDelivered}, nil
+		},
+	})
+
+	rec := postNotify(q, `{"text":"cancel delivery","project":"hs"}`)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", rec.Code)
+	}
+	var accepted struct {
+		RequestID string `json:"request_id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &accepted); err != nil {
+		t.Fatalf("decode accepted response: %v", err)
+	}
+	state, ok := defaultRequests.get(accepted.RequestID)
+	if !ok {
+		t.Fatalf("request %s was not registered", accepted.RequestID)
+	}
+	select {
+	case <-deliveryStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("delivery did not start")
+	}
+	if stage, changed := state.stop(); !changed || stage != "delivering" {
+		t.Fatalf("stop = stage %q changed=%v, want delivering/true", stage, changed)
+	}
+	close(releaseDelivery)
+
+	records := waitForHistoryCount(t, dir, 1)
+	if records[0].RequestID != accepted.RequestID {
+		t.Fatalf("record request_id = %q, want %q", records[0].RequestID, accepted.RequestID)
+	}
+	if records[0].Outcome != OutcomeCanceled {
+		t.Fatalf("outcome = %q, want %q (record: %+v)", records[0].Outcome, OutcomeCanceled, records[0])
 	}
 }
 
