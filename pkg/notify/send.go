@@ -410,6 +410,13 @@ func (q *SendQueue) process(job sendJob) {
 
 	audio, err := q.synthesize(ctx, job.Text, voice)
 	if err != nil {
+		if state != nil {
+			_, terminal := state.snapshot()
+			if terminal {
+				_ = AppendRecord(dir, Record{RequestID: job.ID, Project: job.Project, Text: job.Text, Voice: voice.String(), Speed: voice.Speed, Outcome: OutcomeCanceled, Reason: "canceled during synthesis"})
+				return
+			}
+		}
 		_ = AppendRecord(dir, Record{
 			RequestID: job.ID,
 			Project:   job.Project, Text: job.Text, Voice: voice.String(), Speed: voice.Speed,
@@ -428,6 +435,15 @@ func (q *SendQueue) process(job sendJob) {
 		return
 	}
 	defer cleanup()
+	if state != nil {
+		select {
+		case <-state.cancel:
+			_ = AppendRecord(dir, Record{RequestID: job.ID, Project: job.Project, Text: job.Text, Voice: voice.String(), Speed: voice.Speed, Outcome: OutcomeCanceled, Reason: "canceled before delivery"})
+			return
+		default:
+		}
+		state.setStage("delivering")
+	}
 
 	// Deliver's own doc: "every outcome here is a history record, not an
 	// exception" — the error return is reserved for attempts that could not
