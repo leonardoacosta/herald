@@ -38,4 +38,5 @@ codex, pi) consume herald as a plugin; no harness carries its own speech or push
 | `~/dev/personal/herdr-shepherd` | Former owner of the pipe; post-extraction a consumer only |
 | `~/dev/codex` | `hooks.json` wires `moshi-hook codex-hook` |
 | `~/dev/pi` | `agent/extensions/moshi-hooks.ts` (vendor-managed) wires `moshi-hook pi-hook` |
+| `~/.jcode` (jcode harness) | `plugin/jcode/install.sh` owns herald's entries in the `[hooks]` table of `~/.jcode/config.toml`; adapters delegate to `bin/notify.sh`; wiring documented in `docs/jcode.md` |
 | homelab | Runs the Kokoro compose module |
