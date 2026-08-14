@@ -92,6 +92,8 @@ func handleStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	stage, changed := state.stop()
+	remoteStopped := StopRemoteRequest(r.Context(), resolvePlaybackConfig(), body.RequestID)
+	changed = changed || remoteStopped
 	writeJSON(w, http.StatusOK, map[string]any{"status": "canceled", "request_id": body.RequestID, "stage": stage, "stopped": changed})
 }
 

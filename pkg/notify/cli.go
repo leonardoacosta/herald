@@ -103,6 +103,8 @@ func runStop(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	stage, changed := state.stop()
+	remoteStopped := StopRemoteRequest(context.Background(), resolvePlaybackConfig(), id)
+	changed = changed || remoteStopped
 	if *jsonOut {
 		_ = json.NewEncoder(stdout).Encode(map[string]any{"status": "canceled", "request_id": id, "stage": stage, "stopped": changed})
 	}
