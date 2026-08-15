@@ -35,6 +35,18 @@ NOTIFY="$HERALD/bin/notify.sh"
 # Only act on the event we are wired for.
 [ "${JCODE_HOOK_EVENT:-turn_end}" = "turn_end" ] || exit 0
 
+# Only the user-facing (root) session gets a voice. Jcode fires turn_end for
+# every agent turn, including swarm workers and subagents, which would speak
+# once per worker mid-run. Herald is the end-of-transmission summary, so
+# anything with a parent session stays silent. Older Jcode builds do not set
+# JCODE_HOOK_SESSION_ROLE; treat an absent value as root so the integration
+# degrades to previous behavior rather than going mute.
+case "${JCODE_HOOK_SESSION_ROLE:-root}" in
+  root) ;;
+  *) exit 0 ;;
+esac
+[ -z "${JCODE_HOOK_PARENT_SESSION_ID:-}" ] || exit 0
+
 # Threshold gate: trivial turns stay silent.
 MIN_MS="${HERALD_JCODE_MIN_TURN_MS:-30000}"
 DUR_MS="${JCODE_HOOK_DURATION_MS:-0}"
