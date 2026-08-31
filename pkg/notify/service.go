@@ -193,7 +193,8 @@ func Listen(cfg BindConfig) ([]net.Listener, error) {
 // NewServer so those tasks are additive: `NewServer().Mux.HandleFunc("/notify", ...)`
 // from their own file, never an edit to this one.
 type Server struct {
-	Mux *http.ServeMux
+	Mux   *http.ServeMux
+	Queue *SendQueue
 }
 
 // NewServer builds the mux with only /health registered — task 1.4's own
@@ -201,17 +202,17 @@ type Server struct {
 // exists before 1.5/1.6 land) and task 1.9's systemd readiness probe, mirroring
 // compose/kokoro.yml's healthcheck precedent.
 func NewServer() *Server {
-	s := &Server{Mux: http.NewServeMux()}
-	s.Mux.HandleFunc("/health", handleHealth)
-	s.Mux.HandleFunc("/notify", NewSendQueue(SendQueueOptions{}).HandleNotify) // task 1.5, send.go
-	registerControlHandlers(s.Mux)                                             // task 1.6, control.go
+	q := NewSendQueue(SendQueueOptions{})
+	s := &Server{Mux: http.NewServeMux(), Queue: q}
+	s.Mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { handleHealth(w, r, q) })
+	s.Mux.HandleFunc("/notify", q.HandleNotify) // task 1.5, send.go
+	registerControlHandlers(s.Mux)              // task 1.6, control.go
 	return s
 }
 
-func handleHealth(w http.ResponseWriter, r *http.Request) {
+func handleHealth(w http.ResponseWriter, r *http.Request, q *SendQueue) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `{"status":"ok","version":%q}`+"\n", Version())
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "version": Version(), "queue": q.Stats()})
 }
 
 // shutdownGrace bounds how long Serve waits for in-flight requests to finish

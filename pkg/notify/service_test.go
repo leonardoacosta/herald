@@ -2,10 +2,12 @@ package notify
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -204,5 +206,30 @@ func TestServeRequiresAtLeastOneListener(t *testing.T) {
 	httpServer := &http.Server{Handler: NewServer().Mux}
 	if err := Serve(context.Background(), httpServer); err == nil {
 		t.Fatal("Serve accepted zero listeners")
+	}
+}
+
+func TestHealthReportsNonSecretQueueStats(t *testing.T) {
+	q := NewSendQueue(SendQueueOptions{Capacity: 3})
+	rec := httptest.NewRecorder()
+	handleHealth(rec, httptest.NewRequest(http.MethodGet, "/health", nil), q)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("health status = %d, want 200", rec.Code)
+	}
+	var body struct {
+		Status string     `json:"status"`
+		Queue  QueueStats `json:"queue"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode health: %v", err)
+	}
+	if body.Status != "ok" {
+		t.Errorf("status = %q, want ok", body.Status)
+	}
+	if body.Queue.Capacity != 3 || body.Queue.Queued != 0 || body.Queue.InFlight != 0 {
+		t.Errorf("queue stats = %+v, want empty capacity-3 queue", body.Queue)
+	}
+	if strings.Contains(rec.Body.String(), "request") || strings.Contains(rec.Body.String(), "text") {
+		t.Errorf("health exposed request data: %s", rec.Body.String())
 	}
 }

@@ -300,8 +300,10 @@ func (q *SendQueue) HandleNotify(w http.ResponseWriter, r *http.Request) {
 	job := sendJob{ID: id, Project: project, Text: text, Muted: muted, MutedUntil: until}
 	select {
 	case q.jobs <- job:
+		q.accepted.Add(1)
 		writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted", "request_id": id})
 	default:
+		q.rejected.Add(1)
 		// The queue is full. Unlike the 400s above, this request WAS valid
 		// and WAS never delivered — that is a herald-side failure an
 		// operator needs on the board (AGENTS.md: "History is the
@@ -334,6 +336,32 @@ func (q *SendQueue) HandleNotify(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// decodeJSONBody decodes exactly one JSON value from a bounded request body.
+// Reading max+1 bytes lets callers distinguish an oversized body from a valid
+// value followed by trailing data, while retaining the endpoint's existing
+// error semantics.
+func decodeJSONBody(body io.Reader, dst any) error {
+	data, err := io.ReadAll(io.LimitReader(body, maxNotifyBodyBytes+1))
+	if err != nil {
+		return err
+	}
+	if len(data) > maxNotifyBodyBytes {
+		return fmt.Errorf("request body exceeds %d bytes", maxNotifyBodyBytes)
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if err := dec.Decode(dst); err != nil {
+		return err
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return errors.New("request body must contain a single JSON value")
+		}
+		return fmt.Errorf("trailing data after JSON value: %w", err)
+	}
+	return nil
+}
+
 func writeNotifyJSON(w http.ResponseWriter, status int, body map[string]string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -363,6 +391,11 @@ func (q *SendQueue) run() {
 // acceptable trade against the alternative of a wedged worker silencing
 // every notification after it.
 func (q *SendQueue) process(job sendJob) {
+	q.inFlight.Add(1)
+	defer func() {
+		q.inFlight.Add(-1)
+		q.completed.Add(1)
+	}()
 	state, _ := defaultRequests.get(job.ID)
 	if state != nil {
 		state.setStage("queued")
