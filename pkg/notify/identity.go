@@ -96,3 +96,9 @@ func (r *requestRegistry) get(id string) (*requestState, bool) {
 	s, ok := r.items[id]
 	return s, ok
 }
+
+func (r *requestRegistry) remove(id string) {
+	r.mu.Lock()
+	delete(r.items, id)
+	r.mu.Unlock()
+}

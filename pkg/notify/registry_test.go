@@ -91,3 +91,15 @@ func TestResolveProjectsPathMatchesShellPrecedence(t *testing.T) {
 		t.Fatalf("dotfiles path = %q", got)
 	}
 }
+
+func TestRequestRegistryRemoveEvictsState(t *testing.T) {
+	r := newRequestRegistry()
+	s := r.add("request")
+	if got, ok := r.get(s.id); !ok || got != s {
+		t.Fatalf("state missing after add: %v %v", got, ok)
+	}
+	r.remove(s.id)
+	if _, ok := r.get(s.id); ok {
+		t.Fatal("request state was not evicted")
+	}
+}

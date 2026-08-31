@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -129,6 +130,9 @@ type SendQueue struct {
 	completed  atomic.Uint64
 	rejected   atomic.Uint64
 	inFlight   atomic.Int64
+	mu         sync.Mutex
+	closed     bool
+	workerDone chan struct{}
 }
 
 // QueueStats is a non-secret snapshot suitable for operator-facing health
@@ -171,9 +175,55 @@ func NewSendQueue(opts SendQueueOptions) *SendQueue {
 		jobs:       make(chan sendJob, capacity),
 		synthesize: synth,
 		deliver:    deliver,
+		workerDone: make(chan struct{}),
 	}
 	go q.run()
 	return q
+}
+
+// Close stops accepting work, drains accepted jobs, and waits for the worker.
+// It is safe to call more than once.
+func (q *SendQueue) Close() {
+	q.mu.Lock()
+	if !q.closed {
+		q.closed = true
+		close(q.jobs)
+	}
+	done := q.workerDone
+	q.mu.Unlock()
+	<-done
+}
+
+// Shutdown is the context-bounded form of Close. A timed out shutdown leaves
+// the worker running so accepted notifications are not silently abandoned.
+func (q *SendQueue) Shutdown(ctx context.Context) error {
+	q.mu.Lock()
+	if !q.closed {
+		q.closed = true
+		close(q.jobs)
+	}
+	done := q.workerDone
+	q.mu.Unlock()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (q *SendQueue) enqueue(job sendJob) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.closed {
+		return false
+	}
+	select {
+	case q.jobs <- job:
+		return true
+	default:
+		return false
+	}
 }
 
 // defaultSynthesize builds a Kokoro client from the environment on every
@@ -298,11 +348,10 @@ func (q *SendQueue) HandleNotify(w http.ResponseWriter, r *http.Request) {
 	}
 	defaultRequests.add(id)
 	job := sendJob{ID: id, Project: project, Text: text, Muted: muted, MutedUntil: until}
-	select {
-	case q.jobs <- job:
+	if q.enqueue(job) {
 		q.accepted.Add(1)
 		writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted", "request_id": id})
-	default:
+	} else {
 		q.rejected.Add(1)
 		// The queue is full. Unlike the 400s above, this request WAS valid
 		// and WAS never delivered — that is a herald-side failure an
@@ -370,6 +419,7 @@ func writeNotifyJSON(w http.ResponseWriter, status int, body map[string]string) 
 
 // run drains jobs one at a time for the life of the process.
 func (q *SendQueue) run() {
+	defer close(q.workerDone)
 	for job := range q.jobs {
 		q.process(job)
 	}
@@ -391,8 +441,16 @@ func (q *SendQueue) run() {
 // acceptable trade against the alternative of a wedged worker silencing
 // every notification after it.
 func (q *SendQueue) process(job sendJob) {
+	recorded := false
+	record := func(r Record) { recorded = true; _ = AppendRecord(ResolveStateDir(), r) }
 	q.inFlight.Add(1)
 	defer func() {
+		defaultRequests.remove(job.ID)
+		if r := recover(); r != nil && !recorded {
+			recorded = true
+			record(Record{RequestID: job.ID, Project: job.Project, Text: job.Text, Outcome: OutcomeSynthFailed, Reason: fmt.Sprintf("worker panic: %v", r)})
+			fmt.Fprintf(os.Stderr, "notify: send worker recovered from a panic processing project=%q: %v\n", job.Project, r)
+		}
 		q.inFlight.Add(-1)
 		q.completed.Add(1)
 	}()
@@ -401,17 +459,11 @@ func (q *SendQueue) process(job sendJob) {
 		state.setStage("queued")
 		select {
 		case <-state.cancel:
-			_ = AppendRecord(ResolveStateDir(), Record{RequestID: job.ID, Project: job.Project, Text: job.Text, Outcome: OutcomeCanceled, Reason: "canceled before synthesis"})
+			record(Record{RequestID: job.ID, Project: job.Project, Text: job.Text, Outcome: OutcomeCanceled, Reason: "canceled before synthesis"})
 			return
 		default:
 		}
 	}
-	defer func() {
-		if r := recover(); r != nil {
-			fmt.Fprintf(os.Stderr, "notify: send worker recovered from a panic processing project=%q: %v\n", job.Project, r)
-		}
-	}()
-
 	dir := ResolveStateDir()
 
 	if job.Muted {
@@ -425,7 +477,7 @@ func (q *SendQueue) process(job sendJob) {
 		if v, err := ResolveVoice(dir, job.Project); err == nil {
 			voice = v.String()
 		}
-		_ = AppendRecord(dir, Record{
+		record(Record{
 			RequestID: job.ID,
 			Project:   job.Project,
 			Text:      job.Text,
@@ -455,7 +507,7 @@ func (q *SendQueue) process(job sendJob) {
 	// intended. Mirrored verbatim here.
 	voice, err := ResolveVoice(dir, job.Project)
 	if err != nil {
-		_ = AppendRecord(dir, Record{
+		record(Record{
 			RequestID: job.ID,
 			Project:   job.Project, Text: job.Text, Voice: DefaultVoice,
 			Outcome: OutcomeSynthFailed, Reason: err.Error(),
@@ -468,11 +520,11 @@ func (q *SendQueue) process(job sendJob) {
 		if state != nil {
 			_, terminal := state.snapshot()
 			if terminal {
-				_ = AppendRecord(dir, Record{RequestID: job.ID, Project: job.Project, Text: job.Text, Voice: voice.String(), Speed: voice.Speed, Outcome: OutcomeCanceled, Reason: "canceled during synthesis"})
+				record(Record{RequestID: job.ID, Project: job.Project, Text: job.Text, Voice: voice.String(), Speed: voice.Speed, Outcome: OutcomeCanceled, Reason: "canceled during synthesis"})
 				return
 			}
 		}
-		_ = AppendRecord(dir, Record{
+		record(Record{
 			RequestID: job.ID,
 			Project:   job.Project, Text: job.Text, Voice: voice.String(), Speed: voice.Speed,
 			Outcome: OutcomeSynthFailed, Reason: err.Error(),
@@ -482,7 +534,7 @@ func (q *SendQueue) process(job sendJob) {
 
 	audioPath, cleanup, err := stageAudio(audio)
 	if err != nil {
-		_ = AppendRecord(dir, Record{
+		record(Record{
 			Project: job.Project, Text: job.Text, Voice: voice.String(), Speed: voice.Speed,
 			Outcome: OutcomeTransportFailed,
 			Reason:  fmt.Sprintf("stage synthesized audio for delivery: %v", err),
@@ -493,7 +545,7 @@ func (q *SendQueue) process(job sendJob) {
 	if state != nil {
 		select {
 		case <-state.cancel:
-			_ = AppendRecord(dir, Record{RequestID: job.ID, Project: job.Project, Text: job.Text, Voice: voice.String(), Speed: voice.Speed, Outcome: OutcomeCanceled, Reason: "canceled before delivery"})
+			record(Record{RequestID: job.ID, Project: job.Project, Text: job.Text, Voice: voice.String(), Speed: voice.Speed, Outcome: OutcomeCanceled, Reason: "canceled before delivery"})
 			return
 		default:
 		}
@@ -509,7 +561,7 @@ func (q *SendQueue) process(job sendJob) {
 	if state != nil && state.finalize() {
 		result = DeliveryResult{Outcome: OutcomeCanceled, Reason: "canceled during delivery"}
 	}
-	_ = AppendRecord(dir, Record{
+	record(Record{
 		RequestID: job.ID,
 		Project:   job.Project, Text: job.Text, Voice: voice.String(), Speed: voice.Speed,
 		Outcome: result.Outcome, Reason: result.Reason,
