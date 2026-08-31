@@ -122,6 +122,10 @@ catalog. New Kokoro assignments are catalog-validated and written atomically at 
 fixed harmless sentence, discards the audio, and never writes notification history or
 contacts the playback host.
 
+## Verification
+
+Run `./bin/verify.sh` for the canonical local and CI gate. It runs `go test ./...` and the explicit hermetic shell-test allowlist. Live/deployed acceptance and audition scripts are intentionally excluded and must be run only on demand.
+
 ## Status
 
 The core pipe extraction is implemented and archived. See `openspec/changes/` for the
