@@ -13,7 +13,7 @@ func TestSendQueueShutdownDrainsAndRejects(t *testing.T) {
 	if err := q.Shutdown(context.Background()); err != nil {
 		t.Fatalf("shutdown: %v", err)
 	}
-	if q.enqueue(sendJob{ID: "after-close"}) {
+	if accepted, closed := q.enqueue(sendJob{ID: "after-close"}); accepted || !closed {
 		t.Fatal("queue accepted work after shutdown")
 	}
 	select {

@@ -212,17 +212,17 @@ func (q *SendQueue) Shutdown(ctx context.Context) error {
 	}
 }
 
-func (q *SendQueue) enqueue(job sendJob) bool {
+func (q *SendQueue) enqueue(job sendJob) (accepted, closed bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if q.closed {
-		return false
+		return false, true
 	}
 	select {
 	case q.jobs <- job:
-		return true
+		return true, false
 	default:
-		return false
+		return false, false
 	}
 }
 
@@ -348,10 +348,11 @@ func (q *SendQueue) HandleNotify(w http.ResponseWriter, r *http.Request) {
 	}
 	defaultRequests.add(id)
 	job := sendJob{ID: id, Project: project, Text: text, Muted: muted, MutedUntil: until}
-	if q.enqueue(job) {
+	if accepted, _ := q.enqueue(job); accepted {
 		q.accepted.Add(1)
 		writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted", "request_id": id})
 	} else {
+		defaultRequests.remove(job.ID)
 		q.rejected.Add(1)
 		// The queue is full. Unlike the 400s above, this request WAS valid
 		// and WAS never delivered — that is a herald-side failure an
