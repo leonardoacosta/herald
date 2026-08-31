@@ -115,6 +115,28 @@ func TestHandleMuteRejectsMalformedBody(t *testing.T) {
 	}
 }
 
+func TestJSONRequestBodiesRejectTrailingValuesAndOversize(t *testing.T) {
+	tests := []struct {
+		name    string
+		handler http.HandlerFunc
+		body    string
+	}{
+		{"mute trailing", handleMute, `{"duration":"30s"}{}`},
+		{"notify trailing", (&SendQueue{jobs: make(chan sendJob, 1)}).HandleNotify, `{"text":"hello"}{}`},
+		{"mute oversize", handleMute, `{"duration":"` + strings.Repeat("x", maxNotifyBodyBytes) + `"}`},
+		{"notify oversize", (&SendQueue{jobs: make(chan sendJob, 1)}).HandleNotify, `{"text":"` + strings.Repeat("x", maxNotifyBodyBytes) + `"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupControlTestState(t)
+			rec := doControl(tt.handler, http.MethodPost, "/control", tt.body)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400 (body %s)", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
 func TestHandleMuteMethodNotAllowed(t *testing.T) {
 	setupControlTestState(t)
 	rec := doControl(handleMute, http.MethodGet, "/mute", "")

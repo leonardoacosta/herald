@@ -82,7 +82,7 @@ func handleStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body stopRequest
-	if err := json.NewDecoder(io.LimitReader(r.Body, maxNotifyBodyBytes)).Decode(&body); err != nil || !validRequestID(body.RequestID) {
+	if err := decodeJSONBody(r.Body, &body); err != nil || !validRequestID(body.RequestID) {
 		writeNotifyJSON(w, http.StatusBadRequest, map[string]string{"error": "notify: valid request_id is required"})
 		return
 	}
@@ -114,12 +114,7 @@ func handleMute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body muteRequest
-	dec := json.NewDecoder(io.LimitReader(r.Body, maxNotifyBodyBytes))
-	if err := dec.Decode(&body); err != nil && err != io.EOF {
-		// io.EOF means an empty body, which is valid here (falls through to
-		// defaultMuteSpec below) — everywhere else in this file an empty
-		// body is fine for the same reason: /mute's only required input is
-		// optional.
+	if err := decodeJSONBody(r.Body, &body); err != nil && err != io.EOF {
 		writeNotifyJSON(w, http.StatusBadRequest, map[string]string{
 			"error": fmt.Sprintf("notify: malformed request body: %v", err),
 		})

@@ -1,14 +1,17 @@
 package notify
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -122,6 +125,26 @@ type SendQueue struct {
 	jobs       chan sendJob
 	synthesize Synthesizer
 	deliver    DeliverFunc
+	accepted   atomic.Uint64
+	completed  atomic.Uint64
+	rejected   atomic.Uint64
+	inFlight   atomic.Int64
+}
+
+// QueueStats is a non-secret snapshot suitable for operator-facing health
+// output. It intentionally contains counts and capacity only, never request
+// text, project names, IDs, or paths.
+type QueueStats struct {
+	Capacity  int    `json:"capacity"`
+	Queued    int    `json:"queued"`
+	InFlight  int64  `json:"in_flight"`
+	Accepted  uint64 `json:"accepted"`
+	Completed uint64 `json:"completed"`
+	Rejected  uint64 `json:"rejected"`
+}
+
+func (q *SendQueue) Stats() QueueStats {
+	return QueueStats{Capacity: cap(q.jobs), Queued: len(q.jobs), InFlight: q.inFlight.Load(), Accepted: q.accepted.Load(), Completed: q.completed.Load(), Rejected: q.rejected.Load()}
 }
 
 var defaultRequests = newRequestRegistry()
@@ -229,8 +252,7 @@ func (q *SendQueue) HandleNotify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body notifyRequest
-	dec := json.NewDecoder(io.LimitReader(r.Body, maxNotifyBodyBytes))
-	if err := dec.Decode(&body); err != nil {
+	if err := decodeJSONBody(r.Body, &body); err != nil {
 		writeNotifyJSON(w, http.StatusBadRequest, map[string]string{
 			"error": fmt.Sprintf("notify: malformed request body: %v", err),
 		})
