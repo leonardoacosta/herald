@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# install.sh — wires herald's Jcode hook adapters into ~/.jcode/config.toml.
+# install.sh — removes retired Herald Jcode hook adapters from ~/.jcode/config.toml.
 #
 # Usage:
-#   install.sh            add/refresh herald's entries in the [hooks] table
+#   install.sh            report that automatic hook installation is retired
 #   install.sh --remove   drop only herald's entries; everything else intact
 #   install.sh --status   report wired vs shipped
 #
@@ -22,11 +22,11 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 CONFIG="${JCODE_CONFIG:-$HOME/.jcode/config.toml}"
-MODE="install"
+MODE="remove"
 case "${1:-}" in
   --remove) MODE="remove" ;;
   --status) MODE="status" ;;
-  "") ;;
+  "") echo "install.sh: automatic Herald Jcode hooks are retired; use --remove to clean existing entries"; exit 0 ;;
   -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
   *) echo "install.sh: unknown option: $1" >&2; exit 1 ;;
 esac
