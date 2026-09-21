@@ -110,6 +110,71 @@ func TestNotifyHandlerReturnsQuicklyWhileSynthesisIsSlow(t *testing.T) {
 	waitForHistoryCount(t, dir, 1)
 }
 
+func TestNotifyTargetIsPropagatedToDeliveryAndHistory(t *testing.T) {
+	dir := setupSendTestState(t)
+	var gotTarget string
+	q := NewSendQueue(SendQueueOptions{
+		Synthesize: func(context.Context, string, Voice) ([]byte, error) { return []byte("audio"), nil },
+		Deliver: func(_ context.Context, _ string, ids ...string) (DeliveryResult, error) {
+			if len(ids) > 1 {
+				gotTarget = ids[1]
+			}
+			return DeliveryResult{Outcome: OutcomeDelivered}, nil
+		},
+	})
+	if rec := postNotify(q, `{"text":"targeted","project":"hs","target":"client-7"}`); rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", rec.Code)
+	}
+	records := waitForHistoryCount(t, dir, 1)
+	if gotTarget != "client-7" || records[0].Target != "client-7" {
+		t.Fatalf("target not propagated: delivery=%q history=%q", gotTarget, records[0].Target)
+	}
+}
+
+func TestNotifyTargetRejectsUnsafeValues(t *testing.T) {
+	setupSendTestState(t)
+	q := NewSendQueue(SendQueueOptions{Synthesize: failIfCalledSynthesize(t), Deliver: failIfCalledDeliver(t)})
+	if rec := postNotify(q, `{"text":"bad","target":"host;rm -rf /"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestNotifyHandlerPreservesConnectedClientTargetInHistory(t *testing.T) {
+	dir := setupSendTestState(t)
+	q := NewSendQueue(SendQueueOptions{
+		Synthesize: func(context.Context, string, Voice) ([]byte, error) { return []byte("audio"), nil },
+		Deliver: func(context.Context, string, ...string) (DeliveryResult, error) {
+			return DeliveryResult{Outcome: OutcomeDelivered}, nil
+		},
+	})
+
+	rec := postNotify(q, `{"text":"targeted","project":"hs","target":"mac-pane-7"}`)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", rec.Code)
+	}
+	records := waitForHistoryCount(t, dir, 1)
+	if records[0].Target != "mac-pane-7" {
+		t.Fatalf("history target = %q, want mac-pane-7: %+v", records[0].Target, records[0])
+	}
+}
+
+func TestNotifyHandlerRejectsUnsafeConnectedClientTarget(t *testing.T) {
+	dir := setupSendTestState(t)
+	q := NewSendQueue(SendQueueOptions{Synthesize: failIfCalledSynthesize(t), Deliver: failIfCalledDeliver(t)})
+	rec := postNotify(q, `{"text":"targeted","project":"hs","target":"mac/pane"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	time.Sleep(50 * time.Millisecond)
+	records, err := ReadHistory(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("unsafe target produced history: %+v", records)
+	}
+}
+
 // TestNotifyHandlerDoesNotRecordUntilSynthesisReleases is the double-send
 // guard, in the shape of TestDeliveryNeverPassesDashN: rather than trusting
 // a timing margin, it makes a synchronous endpoint structurally unable to

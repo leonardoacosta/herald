@@ -1,10 +1,14 @@
 package notify
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -50,9 +54,56 @@ type Status struct {
 // matters. Falls back to "devel" when build info is unavailable (e.g. a test
 // binary).
 func Version() string {
+	return buildVersion(runningArtifactDigest())
+}
+
+var runningDigest = artifactDigestOnce(func() string {
+	if _, err := os.Stat("/proc/self/exe"); err == nil {
+		return "/proc/self/exe"
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	return executable
+})
+
+func artifactDigestOnce(path func() string) func() string {
+	return sync.OnceValue(func() string {
+		executable := path()
+		if executable == "" {
+			return ""
+		}
+		digest, err := executableDigest(executable)
+		if err != nil {
+			return ""
+		}
+		return digest
+	})
+}
+
+func runningArtifactDigest() string { return runningDigest() }
+
+// executableDigest identifies the bytes that are actually running. Git's
+// vcs.revision/vcs.modified settings describe the source tree, not the output
+// artifact, so two successive dirty builds can otherwise look identical.
+func executableDigest(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil))[:12], nil
+}
+
+func buildVersion(digest string) string {
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
-		return "devel"
+		return withDigest("devel", digest)
 	}
 	var rev, dirty string
 	for _, s := range info.Settings {
@@ -70,9 +121,16 @@ func Version() string {
 		}
 	}
 	if rev == "" {
-		return "devel"
+		return withDigest("devel", digest)
 	}
-	return rev + dirty
+	return withDigest(rev+dirty, digest)
+}
+
+func withDigest(version, digest string) string {
+	if digest == "" {
+		return version
+	}
+	return version + "-" + digest
 }
 
 // ReadStatus assembles the readout from dir.

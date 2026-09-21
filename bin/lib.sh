@@ -75,6 +75,28 @@ herald_config() {
   printf '%s\n' "$v"
 }
 
+# herald_validate_client_targets validates the optional identity-to-SSH-host
+# mapping without contacting a host. The request API accepts identities only;
+# this is the deployment boundary where those identities become SSH targets.
+herald_validate_client_targets() {
+  local mapping="${1:-${HERALD_NOTIFY_CLIENT_TARGETS:-}}" entry identity host
+  local -A seen=()
+  [ -n "${mapping//[[:space:]]/}" ] || return 0
+  IFS=',' read -ra entries <<< "$mapping"
+  for entry in "${entries[@]}"; do
+    entry="${entry#${entry%%[![:space:]]*}}"
+    entry="${entry%${entry##*[![:space:]]}}"
+    [[ "$entry" == *=* ]] || { echo "invalid HERALD_NOTIFY_CLIENT_TARGETS entry: $entry" >&2; return 1; }
+    identity="${entry%%=*}"; host="${entry#*=}"
+    identity="${identity#${identity%%[![:space:]]*}}"; identity="${identity%${identity##*[![:space:]]}}"
+    host="${host#${host%%[![:space:]]*}}"; host="${host%${host##*[![:space:]]}}"
+    [[ "$identity" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "invalid client identity in HERALD_NOTIFY_CLIENT_TARGETS: $identity" >&2; return 1; }
+    [[ "$host" != "" && "$host" != -* && "$host" != *[[:space:]]* ]] || { echo "invalid SSH host for identity $identity in HERALD_NOTIFY_CLIENT_TARGETS" >&2; return 1; }
+    [ -z "${seen[$identity]+x}" ] || { echo "duplicate client identity in HERALD_NOTIFY_CLIENT_TARGETS: $identity" >&2; return 1; }
+    seen[$identity]=1
+  done
+}
+
 # Herald's state resolver mirrors pkg/notify.ResolveStateDir.
 herald_state_dir() {
   printf '%s\n' "${HERALD_STATE_DIR:-$HOME/.local/state/herald}"

@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -103,10 +102,14 @@ func runStop(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	stage, changed := state.stop()
-	remoteStopped := StopRemoteRequest(context.Background(), resolvePlaybackConfig(), id)
-	changed = changed || remoteStopped
+	status := "noop"
+	remoteStopped := false
+	if changed {
+		status = "canceled"
+		remoteStopped = StopRemoteRequest(context.Background(), state.deliveryConfig(), id)
+	}
 	if *jsonOut {
-		_ = json.NewEncoder(stdout).Encode(map[string]any{"status": "canceled", "request_id": id, "stage": stage, "stopped": changed})
+		_ = json.NewEncoder(stdout).Encode(map[string]any{"status": status, "request_id": id, "stage": stage, "stopped": remoteStopped})
 	}
 	return 0
 }
@@ -614,15 +617,16 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	httpServer := &http.Server{Handler: NewServer().Mux}
+	server := NewServer()
+	httpServer := newHTTPServer(server.Mux)
 	fmt.Fprintf(stdout, "herald notify serve: version %s, listening on %s (loopback) and %s (tailnet)\n",
 		Version(), cfg.Loopback, cfg.Tailnet)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := Serve(ctx, httpServer, listeners...); err != nil {
-		fmt.Fprintln(stderr, err)
+	if err := serveManaged(ctx, server, httpServer, listeners...); err != nil {
+		fmt.Fprintf(stderr, "notify: shutdown: %v\n", err)
 		return 1
 	}
 	fmt.Fprintln(stdout, "herald notify serve: shut down cleanly")

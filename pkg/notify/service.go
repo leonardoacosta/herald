@@ -69,8 +69,17 @@ type TailscaleIPResolver func() (string, error)
 // TailscaleIPv4 is the default resolver: `tailscale ip -4`, exactly the
 // command bin/kokoro-sync.sh runs to populate KOKORO_BIND_TAILSCALE_IP.
 func TailscaleIPv4() (string, error) {
-	out, err := exec.Command("tailscale", "ip", "-4").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "tailscale", "ip", "-4")
+	// tailscale may leave inherited stdout/stderr pipes open after its process
+	// exits. WaitDelay keeps a broken helper from making resolution unbounded.
+	cmd.WaitDelay = 250 * time.Millisecond
+	out, err := cmd.Output()
 	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "", fmt.Errorf("notify: resolve tailnet address (tailscale ip -4): %w", ctx.Err())
+		}
 		return "", fmt.Errorf("notify: resolve tailnet address (tailscale ip -4): %w", err)
 	}
 	line, _, _ := strings.Cut(string(out), "\n")
@@ -79,6 +88,18 @@ func TailscaleIPv4() (string, error) {
 		return "", errors.New("notify: tailscale ip -4 returned no address")
 	}
 	return line, nil
+}
+
+// newHTTPServer applies the bounds required by the notification control
+// surface. Requests may take up to the playback stop window, but slowloris
+// headers and idle keep-alive connections must not consume resources forever.
+func newHTTPServer(handler http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 2 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		IdleTimeout:       10 * time.Second,
+	}
 }
 
 // BindConfig is the resolved bind posture: exactly the two addresses the

@@ -17,18 +17,33 @@ list_clips() {
 cancel_pending() {
   rid="${1:-}"
   valid_request_id "$rid" || exit 0
-  current=$(cat "$SPOOL/.player.current" 2>/dev/null || true)
-  player_pid=$(cat "$SPOOL/.player.pid" 2>/dev/null || true)
-  if [ "$current" = "$rid" ] && [ -n "$player_pid" ] && kill -0 "$player_pid" 2>/dev/null && [ -p "$SPOOL/.player.in" ]; then
-    { printf 'stop\n' > "$SPOOL/.player.in" 2>/dev/null & } 2>/dev/null
-  fi
+	current=$(cat "$SPOOL/.player.current" 2>/dev/null || true)
+	player_pid=$(cat "$SPOOL/.player.pid" 2>/dev/null || true)
+	ambiguous=0
+	# A stop command is only a request. Without a resident-player acknowledgement
+	# it is never evidence that physical playback stopped. Do not fall through to
+	# the queued-clip branch, either: the same request may have already been copied
+	# into .playing by the fallback drainer.
+	if [ "$current" = "$rid" ]; then
+		ambiguous=1
+		if [ -n "$player_pid" ] && kill -0 "$player_pid" 2>/dev/null && [ -p "$SPOOL/.player.in" ]; then
+			{ printf 'stop\n' > "$SPOOL/.player.in" 2>/dev/null & } 2>/dev/null
+		fi
+	fi
+	# A live or stale lock is intentionally ambiguous. The drainer may have
+	# copied the clip into .playing, so deleting the source cannot acknowledge a
+	# physical stop.
+	if [ -d "$SPOOL/drainer.lock" ]; then
+		ambiguous=1
+	fi
   for meta in "$SPOOL"/clip.*.meta; do
     [ -f "$meta" ] || continue
     IFS= read -r meta_id < "$meta" || meta_id=""
     [ "$meta_id" = "$rid" ] || continue
     clip="${meta%.meta}"
-    rm -f -- "$meta" "$clip"
-    exit 0
+	rm -f -- "$meta" "$clip"
+	[ "$ambiguous" = 1 ] || echo stopped
+	exit 0
   done
   exit 0
 }

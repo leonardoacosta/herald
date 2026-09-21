@@ -6,21 +6,23 @@ the CC plugin: herald owns the notification capability, Jcode only fires the eve
 ## Install
 
 ```bash
-$HERALD/plugin/jcode/install.sh            # wire (or refresh) herald's hook entries
+$HERALD/plugin/jcode/install.sh            # retired: report a no-op
 $HERALD/plugin/jcode/install.sh --status   # what is wired vs what this repo ships
 $HERALD/plugin/jcode/install.sh --remove   # drop only herald's entries
 ```
 
-The installer edits the `[hooks]` table in `~/.jcode/config.toml` (override with
-`JCODE_CONFIG`), appending herald's scripts as **additional array members** so existing
-wiring (notably `jcode-herdr-agent-state.sh`) is preserved untouched. Jcode re-reads
-hook config on reload, so no restart is needed.
+The automatic installer is retired. Its default invocation is a byte-identical no-op.
+Use `--remove` only to clean entries from older deployments. It edits the `[hooks]`
+table in `~/.jcode/config.toml` (override with `JCODE_CONFIG`) and preserves unrelated
+wiring, including `jcode-herdr-agent-state.sh`.
 
-**The installer owns those lines.** Hand-editing herald's entries is a defect — re-run
-the installer instead. Install is interactive, so unlike delivery it fails loud: a
-`[hooks]` table it cannot parse round-trip-safely aborts with the config untouched.
+`--remove` and `--status` fail loudly when the existing `[hooks]` table cannot be
+parsed safely. Removal leaves that configuration untouched on failure. The default
+invocation does not parse or modify configuration.
 
-## Wiring table
+## Legacy wiring table
+
+These adapters describe older installations. The retired installer does not enable them.
 
 | Jcode event | Herald script | Default |
 |---|---|---|

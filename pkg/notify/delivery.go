@@ -54,8 +54,36 @@ type DeliveryConfig struct {
 // DefaultPlaybackTimeout mirrors bin/notify.sh's NOTIFY_PLAYBACK_TIMEOUT default.
 const DefaultPlaybackTimeout = 10 * time.Second
 
+const sshWaitDelay = 250 * time.Millisecond
+
 // ErrNoPlaybackHost is returned when the transport has nowhere to send audio.
 var ErrNoPlaybackHost = errors.New("notify: playback host is not configured")
+
+// configuredClientHost resolves an opaque client identity through deployment
+// configuration. Values are comma-separated identity=ssh-host pairs. A
+// request never supplies an SSH host directly.
+func configuredClientHost(client string) (string, bool) {
+	client = strings.TrimSpace(client)
+	for _, entry := range strings.Split(os.Getenv("HERALD_NOTIFY_CLIENT_TARGETS"), ",") {
+		key, host, ok := strings.Cut(entry, "=")
+		if ok && strings.TrimSpace(key) == client && strings.TrimSpace(host) != "" {
+			return strings.TrimSpace(host), true
+		}
+	}
+	return "", false
+}
+
+func resolvePlaybackHost(cfg DeliveryConfig, client string) string {
+	if host, ok := configuredClientHost(client); ok {
+		return host
+	}
+	return strings.TrimSpace(cfg.PlaybackHost)
+}
+
+func resolveRequestDelivery(cfg DeliveryConfig, client string) DeliveryConfig {
+	cfg.PlaybackHost = resolvePlaybackHost(cfg, client)
+	return cfg
+}
 
 // DeliveryResult is the outcome of one delivery attempt, shaped so the caller
 // can hand it straight to AppendRecord.
@@ -77,6 +105,11 @@ func Deliver(ctx context.Context, cfg DeliveryConfig, audioPath string, requestI
 	if len(requestIDs) > 0 {
 		requestID = requestIDs[0]
 	}
+	if len(requestIDs) > 1 && strings.TrimSpace(requestIDs[1]) != "" {
+		// The request carries only an opaque identity. An unknown identity must
+		// never become an SSH host and retains the deployment's static fallback.
+		cfg = resolveRequestDelivery(cfg, requestIDs[1])
+	}
 	host := strings.TrimSpace(cfg.PlaybackHost)
 	if host == "" {
 		return DeliveryResult{Outcome: OutcomeTransportFailed, Reason: ErrNoPlaybackHost.Error()}, ErrNoPlaybackHost
@@ -97,6 +130,7 @@ func Deliver(ctx context.Context, cfg DeliveryConfig, audioPath string, requestI
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "ssh", DeliverySSHArgs(host, requestID)...)
+	cmd.WaitDelay = sshWaitDelay
 	// Constraint 2: stdin carries the audio. Never /dev/null, never `-n`.
 	cmd.Stdin = bytes.NewReader(audio)
 	var stderr bytes.Buffer
@@ -162,8 +196,14 @@ func StopRemoteRequest(ctx context.Context, cfg DeliveryConfig, requestID string
 	defer cancel()
 	remote := fmt.Sprintf("HERALD_STOP_REQUEST_ID=%s\n%s", requestID, remoteSpoolScript)
 	cmd := exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", host, remote)
+	cmd.WaitDelay = sshWaitDelay
 	cmd.Stdin = strings.NewReader("")
-	return cmd.Run() == nil && ctx.Err() == nil
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	if cmd.Run() != nil || ctx.Err() != nil {
+		return false
+	}
+	return strings.TrimSpace(stdout.String()) == "stopped"
 }
 
 // remoteSpoolScript is the shell run ON the playback host: enqueue into the

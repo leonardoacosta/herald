@@ -3,10 +3,131 @@ package notify
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestExecutableDigestChangesForDifferentArtifacts(t *testing.T) {
+	dir := t.TempDir()
+	first := dir + "/first"
+	second := dir + "/second"
+	if err := os.WriteFile(first, []byte("artifact one"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(second, []byte("artifact two"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	one, err := executableDigest(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, err := executableDigest(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if one == two {
+		t.Fatalf("different artifacts have the same identity %q", one)
+	}
+	again, err := executableDigest(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again != one {
+		t.Fatalf("unchanged artifact identity changed: %q then %q", one, again)
+	}
+}
+
+func TestArtifactDigestOnceIgnoresReplacementAtSamePath(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/herald"
+	if err := os.WriteFile(path, []byte("old dirty build"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	identity := artifactDigestOnce(func() string { return path })
+	old := identity()
+	if old == "" {
+		t.Fatal("initial artifact identity is empty")
+	}
+	if err := os.WriteFile(path, []byte("new dirty build"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got := identity(); got != old {
+		t.Fatalf("cached identity changed after replacement: %q then %q", old, got)
+	}
+}
+
+func TestBuiltArtifactsReportDistinctPublicVersions(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds real CLI artifacts")
+	}
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	first := filepath.Join(dir, "herald-default")
+	second := filepath.Join(dir, "herald-trimpath")
+	build := func(output string, args ...string) {
+		buildArgs := append([]string{"build", "-o", output}, args...)
+		buildArgs = append(buildArgs, "./cmd/herald")
+		cmd := exec.Command("go", buildArgs...)
+		cmd.Dir = root
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("go %v: %v\n%s", buildArgs, err, out)
+		}
+	}
+	build(first)
+	build(second, "-trimpath")
+	status := func(binary string) Status {
+		state := filepath.Join(dir, filepath.Base(binary)+"-state")
+		cmd := exec.Command(binary, "notify", "status", "--json")
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(), StateDirEnv+"="+state)
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("%s notify status --json: %v", binary, err)
+		}
+		var got Status
+		if err := json.Unmarshal(out, &got); err != nil {
+			t.Fatalf("decode %s status: %v (%s)", binary, err, out)
+		}
+		return got
+	}
+	one := status(first)
+	two := status(second)
+	if one.Version == "" || two.Version == "" {
+		t.Fatalf("built artifacts reported empty versions: %q, %q", one.Version, two.Version)
+	}
+	if one.Version == two.Version {
+		t.Fatalf("distinct built artifacts reported the same public version %q", one.Version)
+	}
+	if stable := status(first); stable.Version != one.Version {
+		t.Fatalf("unchanged artifact version changed: %q then %q", one.Version, stable.Version)
+	}
+}
+
+func TestBuildVersionRetainsSourceContextAndArtifactIdentity(t *testing.T) {
+	if got := buildVersion("abc123"); got != "devel-abc123" {
+		t.Errorf("buildVersion = %q, want devel-abc123", got)
+	}
+	if got := withDigest("deadbee-dirty", "abc123"); got != "deadbee-dirty-abc123" {
+		t.Errorf("withDigest = %q, want source revision plus artifact identity", got)
+	}
+}
+
+func TestVersionIsStableForTheRunningArtifact(t *testing.T) {
+	first := Version()
+	second := Version()
+	if first == "" {
+		t.Fatal("Version returned an empty identity")
+	}
+	if second != first {
+		t.Fatalf("Version changed without an artifact change: %q then %q", first, second)
+	}
+}
 
 // notify-service task 2.1 gap-fill. status.go (ReadStatus, TailHistory) had
 // no direct unit test anywhere in the package — every existing exercise of

@@ -29,6 +29,7 @@ type requestState struct {
 	mu            sync.Mutex
 	stage         string
 	terminal      bool
+	delivery      DeliveryConfig
 }
 
 func (s *requestState) setStage(stage string) {
@@ -83,12 +84,22 @@ func newRequestRegistry() *requestRegistry {
 	return &requestRegistry{items: map[string]*requestState{}}
 }
 func (r *requestRegistry) add(id string) *requestState {
+	return r.addWithDelivery(id, DeliveryConfig{})
+}
+
+func (r *requestRegistry) addWithDelivery(id string, delivery DeliveryConfig) *requestState {
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &requestState{id: id, cancel: make(chan struct{}), ctx: ctx, cancelContext: cancel, stage: "accepted"}
+	s := &requestState{id: id, cancel: make(chan struct{}), ctx: ctx, cancelContext: cancel, delivery: delivery, stage: "accepted"}
 	r.mu.Lock()
 	r.items[id] = s
 	r.mu.Unlock()
 	return s
+}
+
+func (s *requestState) deliveryConfig() DeliveryConfig {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.delivery
 }
 func (r *requestRegistry) get(id string) (*requestState, bool) {
 	r.mu.Lock()

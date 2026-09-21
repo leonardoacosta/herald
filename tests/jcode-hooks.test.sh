@@ -9,9 +9,8 @@
 #      fake logs one line per invocation, standing in for the one history
 #      record `bin/notify.sh` would append.
 #
-#   B. Installer round-trip against a fixture config.toml modelled on the
-#      real ~/.jcode/config.toml [hooks] table (herdr wiring present):
-#      install twice -> byte-identical; --remove -> restores the fixture
+#   B. Retired installer behavior against fixture config.toml files: the
+#      default invocation is a no-op, while --remove cleans prewired entries.
 #      exactly.
 # shellcheck disable=SC2015  # `check && ok || bad` is the intended assertion shape here
 set -euo pipefail
@@ -121,10 +120,30 @@ env HERALD="$FAKE_HERALD" HERALD_JCODE_SESSION_END=1 JCODE_HOOK_EVENT=session_en
 [ "$(count)" = "1" ] && ok "session_end fires when opted in" \
   || bad "session_end opt-in did not fire"
 
-echo "B. installer round-trip"
+echo "B. retired installer"
 
 FIXTURE="$TMP/config.fixture.toml"
 cat > "$FIXTURE" <<'TOML'
+[general]
+model = "test"
+
+[hooks]
+turn_start = "/opt/herdr/jcode-herdr-agent-state.sh session"
+turn_end = ["/opt/herdr/jcode-herdr-agent-state.sh session", "__HERALD_TURN_END__"]
+session_start = "/opt/herdr/jcode-herdr-agent-state.sh session"
+session_end = ["/opt/herdr/jcode-herdr-agent-state.sh session", "__HERALD_SESSION_END__"]
+pre_tool_timeout_ms = 5000
+
+[ambient]
+enabled = false
+TOML
+
+# Model an older deployment with Herald entries already wired, plus a clean
+# oracle that --remove must restore exactly.
+sed -i "s#__HERALD_TURN_END__#$REPO/plugin/jcode/hooks/turn-end.sh#; s#__HERALD_SESSION_END__#$REPO/plugin/jcode/hooks/session-end.sh#" "$FIXTURE"
+sed -i "s#__HERALD_TURN_END__#$REPO/plugin/jcode/hooks/turn-end.sh#; s#__HERALD_SESSION_END__#$REPO/plugin/jcode/hooks/session-end.sh#" "$FIXTURE"
+REMOVE_ORACLE="$TMP/remove-oracle.toml"
+cat > "$REMOVE_ORACLE" <<'TOML'
 [general]
 model = "test"
 
@@ -142,19 +161,18 @@ TOML
 CFG="$TMP/config.toml"
 cp "$FIXTURE" "$CFG"
 
+cp "$CFG" "$TMP/before-noop.toml"
 JCODE_CONFIG="$CFG" "$REPO/plugin/jcode/install.sh" >/dev/null
-cp "$CFG" "$TMP/after-first.toml"
-JCODE_CONFIG="$CFG" "$REPO/plugin/jcode/install.sh" >/dev/null
-if cmp -s "$CFG" "$TMP/after-first.toml"; then
-  ok "install is byte-identical on the second run"
+if cmp -s "$CFG" "$TMP/before-noop.toml"; then
+  ok "retired install is a byte-identical no-op"
 else
-  bad "install is not idempotent"; diff "$TMP/after-first.toml" "$CFG" || true
+  bad "retired install changed config"; diff "$TMP/before-noop.toml" "$CFG" || true
 fi
 
 grep -q "plugin/jcode/hooks/turn-end.sh" "$CFG" \
-  && ok "turn_end wired to herald's adapter" || bad "turn_end not wired"
+  && ok "prewired turn_end fixture preserved" || bad "turn_end fixture missing"
 grep -q "plugin/jcode/hooks/session-end.sh" "$CFG" \
-  && ok "session_end wired to herald's adapter" || bad "session_end not wired"
+  && ok "prewired session_end fixture preserved" || bad "session_end fixture missing"
 grep -q "jcode-herdr-agent-state.sh" "$CFG" \
   && ok "existing herdr wiring preserved" || bad "herdr wiring lost"
 grep -q "^turn_start = " "$CFG" \
@@ -166,21 +184,22 @@ JCODE_CONFIG="$CFG" "$REPO/plugin/jcode/install.sh" --status >/dev/null \
   && ok "--status runs clean" || bad "--status failed"
 
 JCODE_CONFIG="$CFG" "$REPO/plugin/jcode/install.sh" --remove >/dev/null
-if cmp -s "$CFG" "$FIXTURE"; then
+if cmp -s "$CFG" "$REMOVE_ORACLE"; then
   ok "--remove restores the fixture exactly"
 else
   bad "--remove did not restore the fixture"; diff "$FIXTURE" "$CFG" || true
 fi
 
-# Array-shaped fixture: herald appends a member, remove drops only it.
+# Array-shaped fixture: removal drops only herald's retired member.
 ARRFIX="$TMP/config.array.toml"
 cat > "$ARRFIX" <<'TOML'
 [hooks]
-turn_end = ["/opt/a.sh", "/opt/b.sh"]
+turn_end = ["/opt/a.sh", "/opt/b.sh", "__HERALD_TURN_END__"]
+session_end = ["__HERALD_SESSION_END__"]
 TOML
 CFG2="$TMP/config2.toml"
 cp "$ARRFIX" "$CFG2"
-JCODE_CONFIG="$CFG2" "$REPO/plugin/jcode/install.sh" >/dev/null
+sed -i "s#__HERALD_TURN_END__#$REPO/plugin/jcode/hooks/turn-end.sh#; s#__HERALD_SESSION_END__#$REPO/plugin/jcode/hooks/session-end.sh#" "$CFG2"
 python3 - "$CFG2" <<'PY' && ok "array-shaped hook: herald appended, others kept" || bad "array-shaped hook mishandled"
 import sys, tomllib
 h = tomllib.load(open(sys.argv[1], 'rb'))["hooks"]["turn_end"]
@@ -194,10 +213,10 @@ h = tomllib.load(open(sys.argv[1], 'rb'))["hooks"]["turn_end"]
 assert h == ["/opt/a.sh", "/opt/b.sh"], h
 PY
 
-# Missing [hooks] table -> fail loud (install is interactive).
+# --remove still fails loud when there is no [hooks] table.
 echo '[general]' > "$TMP/nohooks.toml"
 set +e
-JCODE_CONFIG="$TMP/nohooks.toml" "$REPO/plugin/jcode/install.sh" >/dev/null 2>&1
+JCODE_CONFIG="$TMP/nohooks.toml" "$REPO/plugin/jcode/install.sh" --remove >/dev/null 2>&1
 rc=$?
 set -e
 [ "$rc" -ne 0 ] && ok "missing [hooks] table fails loud" || bad "missing [hooks] silently accepted"
@@ -206,7 +225,7 @@ set -e
 printf '[hooks]\nturn_end = "unterminated\n' > "$TMP/bad.toml"
 cp "$TMP/bad.toml" "$TMP/bad.orig"
 set +e
-JCODE_CONFIG="$TMP/bad.toml" "$REPO/plugin/jcode/install.sh" >/dev/null 2>&1
+JCODE_CONFIG="$TMP/bad.toml" "$REPO/plugin/jcode/install.sh" --remove >/dev/null 2>&1
 rc=$?
 set -e
 [ "$rc" -ne 0 ] && cmp -s "$TMP/bad.toml" "$TMP/bad.orig" \

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -107,6 +108,7 @@ const DefaultSendQueueCapacity = 32
 type sendJob struct {
 	ID         string
 	Project    string
+	Target     string
 	Text       string
 	Muted      bool
 	MutedUntil time.Time
@@ -123,41 +125,40 @@ type SendQueueOptions struct {
 // SendQueue owns the bounded backlog and the single worker goroutine that
 // drains it.
 type SendQueue struct {
-	jobs       chan sendJob
-	synthesize Synthesizer
-	deliver    DeliverFunc
-	accepted   atomic.Uint64
-	completed  atomic.Uint64
-	rejected   atomic.Uint64
-	inFlight   atomic.Int64
-	mu         sync.Mutex
-	closed     bool
-	workerDone chan struct{}
+	jobs                 chan sendJob
+	synthesize           Synthesizer
+	deliver              DeliverFunc
+	accepted             atomic.Uint64
+	completed            atomic.Uint64
+	historyWriteFailures atomic.Uint64
+	rejected             atomic.Uint64
+	inFlight             atomic.Int64
+	mu                   sync.Mutex
+	closed               bool
+	states               map[string]*requestState
+	workerDone           chan struct{}
 }
 
 // QueueStats is a non-secret snapshot suitable for operator-facing health
 // output. It intentionally contains counts and capacity only, never request
 // text, project names, IDs, or paths.
 type QueueStats struct {
-	Capacity  int    `json:"capacity"`
-	Queued    int    `json:"queued"`
-	InFlight  int64  `json:"in_flight"`
-	Accepted  uint64 `json:"accepted"`
-	Completed uint64 `json:"completed"`
-	Rejected  uint64 `json:"rejected"`
+	Capacity             int    `json:"capacity"`
+	Queued               int    `json:"queued"`
+	InFlight             int64  `json:"in_flight"`
+	Accepted             uint64 `json:"accepted"`
+	Completed            uint64 `json:"completed"`
+	Rejected             uint64 `json:"rejected"`
+	HistoryWriteFailures uint64 `json:"history_write_failures"`
 }
 
 func (q *SendQueue) Stats() QueueStats {
-	return QueueStats{Capacity: cap(q.jobs), Queued: len(q.jobs), InFlight: q.inFlight.Load(), Accepted: q.accepted.Load(), Completed: q.completed.Load(), Rejected: q.rejected.Load()}
+	return QueueStats{Capacity: cap(q.jobs), Queued: len(q.jobs), InFlight: q.inFlight.Load(), Accepted: q.accepted.Load(), Completed: q.completed.Load(), Rejected: q.rejected.Load(), HistoryWriteFailures: q.historyWriteFailures.Load()}
 }
 
 var defaultRequests = newRequestRegistry()
 
-// NewSendQueue builds a queue and starts its worker. The worker runs for
-// the lifetime of the process — there is no Close, matching Server's own
-// lifecycle (task 1.4 has no shutdown path for the mux's handlers, only for
-// the listeners) and this package's general posture that the daemon's unit
-// of shutdown is the whole process, supervised by systemd (task 1.9).
+// NewSendQueue starts one worker. The service owns its bounded shutdown.
 func NewSendQueue(opts SendQueueOptions) *SendQueue {
 	capacity := opts.Capacity
 	if capacity <= 0 {
@@ -176,6 +177,7 @@ func NewSendQueue(opts SendQueueOptions) *SendQueue {
 		synthesize: synth,
 		deliver:    deliver,
 		workerDone: make(chan struct{}),
+		states:     make(map[string]*requestState),
 	}
 	go q.run()
 	return q
@@ -220,6 +222,9 @@ func (q *SendQueue) enqueue(job sendJob) (accepted, closed bool) {
 	}
 	select {
 	case q.jobs <- job:
+		if state, ok := defaultRequests.get(job.ID); ok {
+			q.states[job.ID] = state
+		}
 		return true, false
 	default:
 		return false, false
@@ -248,6 +253,12 @@ func defaultDeliver(ctx context.Context, audioPath string, requestIDs ...string)
 	if len(requestIDs) > 0 {
 		requestID = requestIDs[0]
 	}
+	if state, ok := defaultRequests.get(requestID); ok {
+		return Deliver(ctx, state.deliveryConfig(), audioPath, requestID)
+	}
+	if len(requestIDs) > 1 {
+		return Deliver(ctx, resolvePlaybackConfig(), audioPath, requestID, requestIDs[1])
+	}
 	return Deliver(ctx, resolvePlaybackConfig(), audioPath, requestID)
 }
 
@@ -272,6 +283,21 @@ func resolvePlaybackConfig() DeliveryConfig {
 type notifyRequest struct {
 	Text    string `json:"text"`
 	Project string `json:"project"`
+	Target  string `json:"target"`
+	Client  string `json:"client,omitempty"`
+}
+
+var safeNotifyTarget = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$`)
+
+func normalizeNotifyTarget(target string) (string, error) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return "", nil
+	}
+	if !safeNotifyTarget.MatchString(target) {
+		return "", errors.New("notify: target must be a simple client name")
+	}
+	return target, nil
 }
 
 // maxNotifyBodyBytes bounds the request body a caller can hand the handler
@@ -327,6 +353,18 @@ func (q *SendQueue) HandleNotify(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	target, err := normalizeNotifyTarget(body.Target)
+	if err != nil {
+		writeNotifyJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if target == "" {
+		target, err = normalizeNotifyTarget(body.Client)
+		if err != nil {
+			writeNotifyJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+	}
 
 	// Resolved once, here, in request order — see sendJob's doc comment for
 	// why this is not deferred to the worker. A MuteState read error (an
@@ -346,8 +384,8 @@ func (q *SendQueue) HandleNotify(w http.ResponseWriter, r *http.Request) {
 		writeNotifyJSON(w, http.StatusInternalServerError, map[string]string{"error": idErr.Error()})
 		return
 	}
-	defaultRequests.add(id)
-	job := sendJob{ID: id, Project: project, Text: text, Muted: muted, MutedUntil: until}
+	defaultRequests.addWithDelivery(id, resolveRequestDelivery(resolvePlaybackConfig(), target))
+	job := sendJob{ID: id, Project: project, Target: target, Text: text, Muted: muted, MutedUntil: until}
 	if accepted, _ := q.enqueue(job); accepted {
 		q.accepted.Add(1)
 		writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted", "request_id": id})
@@ -372,13 +410,13 @@ func (q *SendQueue) HandleNotify(w http.ResponseWriter, r *http.Request) {
 		if v, verr := ResolveVoice(dir, project); verr == nil {
 			voice = v.String()
 		}
-		_ = AppendRecord(dir, Record{
+		q.appendRecord(dir, Record{
 			RequestID: job.ID,
-			Project:   project,
-			Text:      text,
-			Voice:     voice,
-			Outcome:   OutcomeSynthFailed,
-			Reason:    fmt.Sprintf("send queue full (capacity %d): dropped before synthesis", cap(q.jobs)),
+			Project:   project, Target: target,
+			Text:    text,
+			Voice:   voice,
+			Outcome: OutcomeSynthFailed,
+			Reason:  fmt.Sprintf("send queue full (capacity %d): dropped before synthesis", cap(q.jobs)),
 		})
 		writeNotifyJSON(w, http.StatusServiceUnavailable, map[string]string{
 			"error": "notify: send queue is full, try again shortly",
@@ -431,25 +469,20 @@ func (q *SendQueue) run() {
 // perform for the CLI/pipe path — this is that sequence's in-process,
 // asynchronous twin, not a divergent reimplementation.
 //
-// Wrapped in its own recover: a panic anywhere in one job (a bad Voice
-// value, an injected test double behaving badly, a future bug) must not
-// take the worker goroutine down and silence every notification queued
-// behind it — AGENTS.md's fail-soft contract applies to this async path
-// exactly as it does to bin/notify.sh's synchronous one. A panicking job
-// necessarily forfeits its own history record (there is no safe point to
-// resume the sequence from), which is the one case in this file where an
-// accepted request does not end up with exactly one row; it is judged an
-// acceptable trade against the alternative of a wedged worker silencing
-// every notification after it.
+// Recover per job so a panic cannot silence the backlog. Every job attempts
+// one terminal append, and persistence failures are counted separately.
 func (q *SendQueue) process(job sendJob) {
 	recorded := false
-	record := func(r Record) { recorded = true; _ = AppendRecord(ResolveStateDir(), r) }
+	record := func(r Record) { recorded = true; q.appendRecord(ResolveStateDir(), r) }
 	q.inFlight.Add(1)
 	defer func() {
 		defaultRequests.remove(job.ID)
+		q.mu.Lock()
+		delete(q.states, job.ID)
+		q.mu.Unlock()
 		if r := recover(); r != nil && !recorded {
 			recorded = true
-			record(Record{RequestID: job.ID, Project: job.Project, Text: job.Text, Outcome: OutcomeSynthFailed, Reason: fmt.Sprintf("worker panic: %v", r)})
+			record(Record{RequestID: job.ID, Project: job.Project, Target: job.Target, Text: job.Text, Outcome: OutcomeSynthFailed, Reason: fmt.Sprintf("worker panic: %v", r)})
 			fmt.Fprintf(os.Stderr, "notify: send worker recovered from a panic processing project=%q: %v\n", job.Project, r)
 		}
 		q.inFlight.Add(-1)
@@ -460,7 +493,7 @@ func (q *SendQueue) process(job sendJob) {
 		state.setStage("queued")
 		select {
 		case <-state.cancel:
-			record(Record{RequestID: job.ID, Project: job.Project, Text: job.Text, Outcome: OutcomeCanceled, Reason: "canceled before synthesis"})
+			record(Record{RequestID: job.ID, Project: job.Project, Target: job.Target, Text: job.Text, Outcome: OutcomeCanceled, Reason: "canceled before synthesis"})
 			return
 		default:
 		}
@@ -480,11 +513,11 @@ func (q *SendQueue) process(job sendJob) {
 		}
 		record(Record{
 			RequestID: job.ID,
-			Project:   job.Project,
-			Text:      job.Text,
-			Voice:     voice,
-			Outcome:   OutcomeMuted,
-			Reason:    fmt.Sprintf("muted until %s", job.MutedUntil.Format(time.RFC3339)),
+			Project:   job.Project, Target: job.Target,
+			Text:    job.Text,
+			Voice:   voice,
+			Outcome: OutcomeMuted,
+			Reason:  fmt.Sprintf("muted until %s", job.MutedUntil.Format(time.RFC3339)),
 		})
 		return
 	}
@@ -510,24 +543,27 @@ func (q *SendQueue) process(job sendJob) {
 	if err != nil {
 		record(Record{
 			RequestID: job.ID,
-			Project:   job.Project, Text: job.Text, Voice: DefaultVoice,
+			Project:   job.Project, Target: job.Target, Text: job.Text, Voice: DefaultVoice,
 			Outcome: OutcomeSynthFailed, Reason: err.Error(),
 		})
 		return
 	}
 
+	if state != nil {
+		state.setStage("synthesizing")
+	}
 	audio, err := q.synthesize(ctx, job.Text, voice)
 	if err != nil {
 		if state != nil {
 			_, terminal := state.snapshot()
 			if terminal {
-				record(Record{RequestID: job.ID, Project: job.Project, Text: job.Text, Voice: voice.String(), Speed: voice.Speed, Outcome: OutcomeCanceled, Reason: "canceled during synthesis"})
+				record(Record{RequestID: job.ID, Project: job.Project, Target: job.Target, Text: job.Text, Voice: voice.String(), Speed: voice.Speed, Outcome: OutcomeCanceled, Reason: "canceled during synthesis"})
 				return
 			}
 		}
 		record(Record{
 			RequestID: job.ID,
-			Project:   job.Project, Text: job.Text, Voice: voice.String(), Speed: voice.Speed,
+			Project:   job.Project, Target: job.Target, Text: job.Text, Voice: voice.String(), Speed: voice.Speed,
 			Outcome: OutcomeSynthFailed, Reason: err.Error(),
 		})
 		return
@@ -536,7 +572,7 @@ func (q *SendQueue) process(job sendJob) {
 	audioPath, cleanup, err := stageAudio(audio)
 	if err != nil {
 		record(Record{
-			Project: job.Project, Text: job.Text, Voice: voice.String(), Speed: voice.Speed,
+			RequestID: job.ID, Project: job.Project, Target: job.Target, Text: job.Text, Voice: voice.String(), Speed: voice.Speed,
 			Outcome: OutcomeTransportFailed,
 			Reason:  fmt.Sprintf("stage synthesized audio for delivery: %v", err),
 		})
@@ -546,7 +582,7 @@ func (q *SendQueue) process(job sendJob) {
 	if state != nil {
 		select {
 		case <-state.cancel:
-			record(Record{RequestID: job.ID, Project: job.Project, Text: job.Text, Voice: voice.String(), Speed: voice.Speed, Outcome: OutcomeCanceled, Reason: "canceled before delivery"})
+			record(Record{RequestID: job.ID, Project: job.Project, Target: job.Target, Text: job.Text, Voice: voice.String(), Speed: voice.Speed, Outcome: OutcomeCanceled, Reason: "canceled before delivery"})
 			return
 		default:
 		}
@@ -558,13 +594,13 @@ func (q *SendQueue) process(job sendJob) {
 	// even be MADE (config, unreadable audio), which DeliveryResult already
 	// encodes as a record-worthy outcome too. So the error is deliberately
 	// not branched on here; the result is what the record cares about.
-	result, _ := q.deliver(ctx, audioPath, job.ID)
+	result, _ := q.deliver(ctx, audioPath, job.ID, job.Target)
 	if state != nil && state.finalize() {
 		result = DeliveryResult{Outcome: OutcomeCanceled, Reason: "canceled during delivery"}
 	}
 	record(Record{
 		RequestID: job.ID,
-		Project:   job.Project, Text: job.Text, Voice: voice.String(), Speed: voice.Speed,
+		Project:   job.Project, Target: job.Target, Text: job.Text, Voice: voice.String(), Speed: voice.Speed,
 		Outcome: result.Outcome, Reason: result.Reason,
 	})
 }
@@ -599,4 +635,36 @@ func stageAudio(audio []byte) (path string, cleanup func(), err error) {
 		return "", nil, fmt.Errorf("notify: close staging file: %w", cErr)
 	}
 	return tmp, cleanup, nil
+}
+
+// appendRecord makes persistence failure observable without leaking record content
+// or retrying a possibly partial append. Delivery remains fail-soft.
+func (q *SendQueue) appendRecord(dir string, r Record) {
+	if err := AppendRecord(dir, r); err != nil {
+		q.historyWriteFailures.Add(1)
+		fmt.Fprintln(os.Stderr, "notify: history append failed; inspect state directory permissions and storage")
+	}
+}
+
+// shutdownWithin drains briefly, then cancels remaining work and lets the worker
+// terminalize it. The two budgets plus HTTP shutdown fit TimeoutStopSec=10.
+func (q *SendQueue) shutdownWithin(drain, cleanup time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), drain)
+	err := q.Shutdown(ctx)
+	cancel()
+	if err == nil {
+		return nil
+	}
+	q.mu.Lock()
+	states := make([]*requestState, 0, len(q.states))
+	for _, state := range q.states {
+		states = append(states, state)
+	}
+	q.mu.Unlock()
+	for _, state := range states {
+		state.stop()
+	}
+	ctx, cancel = context.WithTimeout(context.Background(), cleanup)
+	defer cancel()
+	return q.Shutdown(ctx)
 }

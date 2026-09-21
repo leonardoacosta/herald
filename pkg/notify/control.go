@@ -92,9 +92,14 @@ func handleStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	stage, changed := state.stop()
-	remoteStopped := StopRemoteRequest(r.Context(), resolvePlaybackConfig(), body.RequestID)
-	changed = changed || remoteStopped
-	writeJSON(w, http.StatusOK, map[string]any{"status": "canceled", "request_id": body.RequestID, "stage": stage, "stopped": changed})
+	if !changed {
+		writeJSON(w, http.StatusOK, map[string]any{"status": "noop", "request_id": body.RequestID, "stage": stage, "stopped": false})
+		return
+	}
+	// Local cancellation only prevents future work. "stopped" is reserved for
+	// an acknowledgement from the captured playback destination.
+	remoteStopped := StopRemoteRequest(r.Context(), state.deliveryConfig(), body.RequestID)
+	writeJSON(w, http.StatusOK, map[string]any{"status": "canceled", "request_id": body.RequestID, "stage": stage, "stopped": remoteStopped})
 }
 
 // muteRequest is POST /mute's wire body.

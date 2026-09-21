@@ -195,6 +195,7 @@ type Record struct {
 	RequestID string    `json:"request_id,omitempty"`
 	TS        time.Time `json:"ts"`
 	Project   string    `json:"project"`
+	Target    string    `json:"target,omitempty"`
 	Text      string    `json:"text"`
 	Voice     string    `json:"voice"`
 	Speed     float64   `json:"speed,omitempty"`

@@ -30,6 +30,25 @@ func TestDeliveryUsesBatchModeSoItNeverPromptsForAPassword(t *testing.T) {
 	}
 }
 
+func TestPlaybackTargetResolvesOnlyConfiguredIdentity(t *testing.T) {
+	t.Setenv("HERALD_NOTIFY_CLIENT_TARGETS", "laptop=bb-mac, phone=phone-host")
+	cfg := DeliveryConfig{PlaybackHost: "static-host"}
+
+	if got := resolvePlaybackHost(cfg, "laptop"); got != "bb-mac" {
+		t.Fatalf("configured identity resolved to %q, want bb-mac", got)
+	}
+	if got := resolvePlaybackHost(cfg, "ssh://attacker"); got != "static-host" {
+		t.Fatalf("unconfigured identity became %q, want static fallback", got)
+	}
+}
+
+func TestPlaybackTargetMappingNeverTreatsIdentityAsHost(t *testing.T) {
+	t.Setenv("HERALD_NOTIFY_CLIENT_TARGETS", "laptop=bb-mac")
+	if got := resolvePlaybackHost(DeliveryConfig{PlaybackHost: "static-host"}, "bb-mac"); got != "static-host" {
+		t.Fatalf("raw host-like identity resolved to %q, want static fallback", got)
+	}
+}
+
 // Constraints 3 and 4 live in the remote script text. Assert they are present in
 // what actually ships rather than trusting the file was not edited.
 func TestRemoteScriptKeepsRenameAfterCompleteAndTheTrapWindow(t *testing.T) {
