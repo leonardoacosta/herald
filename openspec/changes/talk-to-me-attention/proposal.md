@@ -2,10 +2,14 @@
 
 ## Status and authorization
 
-Proposed, not implementation-approved. On 2026-09-21 the operator requested all previously
-researched P0, P1, and experimental features, including ntfy and Jev integration, through
-`feature`. This authorizes proposal preparation. Implementation and live device operations
-require approval of these artifacts. No external configuration changes are authorized here.
+Approved for implementation on 2026-09-21: the operator approved "talk-to-me-attention"
+and its dependent "phone-speech-experiment". This authorizes implementation of the
+proposed features per the task order and external boundaries below. Live device
+operations and external configuration changes remain governed by the separate activation
+gates they define (phone speech P01/P03, ntfy via existing administration workflow,
+explain-tts replacement as a named activation action). Previously on 2026-09-21 the
+operator requested all previously researched P0, P1, and experimental features, including
+ntfy and Jev integration, through `feature`. That authorized proposal preparation.
 
 ## Why
 

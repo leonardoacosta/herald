@@ -2,9 +2,12 @@
 
 ## Status
 
-Proposed, awaiting implementation approval alongside talk-to-me-attention. Covers F14,
-the requested experimental automatic phone speech capability. This is a dependent boundary,
-not a claim that ntfy attachments autoplay. No two-way microphone interaction is included.
+Approved for implementation on 2026-09-21, alongside its parent talk-to-me-attention.
+Covers F14, the requested experimental automatic phone speech capability. The activation
+boundary in this proposal still governs live device operations: implementation proceeds,
+but device trials need the operator to complete P01, and P03 names any OS automation
+before installing it. This is a dependent boundary, not a claim that ntfy attachments
+autoplay. No two-way microphone interaction is included.
 
 ## Dependency and scope
 
