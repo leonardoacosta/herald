@@ -231,7 +231,11 @@ fi
 # local path exactly as if the service were unreachable — the same posture
 # record_unavailable_binary takes below on a missing herald binary.
 if [ "$WAIT" -eq 0 ] && [ "$PIPELINE_DIVERGES" -eq 0 ] && command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
-  REQUEST_JSON="$(jq -cn --arg text "$TEXT" --arg project "$PROJECT" '{text:$text, project:$project}')"
+  # Jcode exports the requesting terminal snapshot under JCODE_CLIENT_*.
+  # HERDR_PANE_ID is the stable connected-client identity when present. Do
+  # not invent an alias from hostnames, IPs, or a deployment-specific target.
+  CLIENT_ID="${JCODE_CLIENT_HERDR_PANE_ID:-${HERDR_PANE_ID:-${JCODE_CLIENT_SESSION_ID:-}}}"
+  REQUEST_JSON="$(jq -cn --arg text "$TEXT" --arg project "$PROJECT" --arg target "$CLIENT_ID" '{text:$text, project:$project, target:($target // empty)}')"
   RESPONSE_FILE="${HERALD_REQUEST_ID_FILE:-}"
   if [ -n "$RESPONSE_FILE" ]; then
     RESPONSE_ARG=(-o "$RESPONSE_FILE")

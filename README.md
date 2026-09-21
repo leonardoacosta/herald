@@ -76,6 +76,7 @@ that file, then the documented default:
 | --- | --- | --- |
 | `HERALD_KOKORO_BASE_URL` | `NOTIFY_KOKORO_BASE_URL` | `http://127.0.0.1:8880` |
 | `HERALD_NOTIFY_PLAYBACK_HOST` | `NOTIFY_PLAYBACK_HOST` | `mac` |
+| `HERALD_NOTIFY_CLIENT_TARGETS` | `HERALD_NOTIFY_CLIENT_TARGETS` | unset |
 | `HERALD_NOTIFY_PLAYBACK_TIMEOUT` | `NOTIFY_PLAYBACK_TIMEOUT` | `10` seconds |
 | `HERALD_NOTIFY_SYNTH_TIMEOUT` | `NOTIFY_SYNTH_TIMEOUT` | `30` seconds |
 | `HERALD_NOTIFY_PORT` | — | `8881` |
@@ -97,6 +98,17 @@ A caller whose own resolved state dir or Kokoro URL disagrees with what the file
 bypasses the service and runs the local path instead of handing the request to an instance
 that would synthesize or record it somewhere unexpected. See `AGENTS.md` for the full
 contract, including the escape hatch for a caller deliberately pointed at a different service.
+
+Requests may include a client identity in `target` (or the compatibility field `client`).
+Herald resolves that identity through the optional `HERALD_NOTIFY_CLIENT_TARGETS` mapping,
+formatted as comma-separated `identity=ssh-host` pairs, for example
+`laptop=bb-mac,phone=phone-host`. Set it in the shared deployment file at
+`${HERALD_CONFIG_DIR:-~/.config/herald}/config`, not in a request and not in committed source.
+Identity names use letters, numbers, `.`, `_`, or `-`; hosts are SSH host names or aliases with no
+whitespace and must not start with `-`. Duplicate identities are invalid. Run
+`bin/verify-targets.sh` after editing to validate the mapping without contacting any host, then
+restart `herald-notify.service`. The request never supplies an SSH host. An unknown identity uses
+the configured static playback host above, preserving the normal fallback.
 
 Legacy `HERDR_*` notification variables remain fallback reads for one release.
 Kokoro's own service lifecycle is managed separately by `bin/kokoro-sync.sh`; the committed
@@ -124,7 +136,10 @@ contacts the playback host.
 
 ## Verification
 
-Run `./bin/verify.sh` for the canonical local and CI gate. It runs `go test ./...` and the explicit hermetic shell-test allowlist. Live/deployed acceptance and audition scripts are intentionally excluded and must be run only on demand.
+Run `./bin/verify.sh` for the canonical local and CI gate. It runs `go test ./...`, mapping validation,
+and the explicit hermetic shell-test allowlist. `bin/verify-targets.sh` is the operational, read-only
+check for the deployed mapping. It prints identities and configuration location, but never sends a
+notification or contacts a host. Live/deployed acceptance and audition scripts are intentionally excluded.
 
 ## Status
 
