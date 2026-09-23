@@ -4,6 +4,7 @@
 **/.nfs*
 .DS_Store
 bin/herald
+node_modules/
 
 # OpenSpec decision ledgers stay local. They record cross-repo authorizations
 # and carry absolute paths plus private-repo file listings — internal process
