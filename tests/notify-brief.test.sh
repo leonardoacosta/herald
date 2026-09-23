@@ -12,7 +12,13 @@ PLUGIN="$REPO/plugin"
 TMP="$(mktemp -d -t herald-brief.XXXXXX)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
-[ -x "$REPO/bin/herald" ] || go build -C "$REPO" -o bin/herald ./cmd/herald
+if [ -n "${HERALD_BIN:-}" ]; then
+  [ -x "$HERALD_BIN" ] || { echo "HERALD_BIN is not executable: $HERALD_BIN" >&2; exit 1; }
+else
+  HERALD_BIN="$TMP/herald"
+  go build -C "$REPO" -o "$HERALD_BIN" ./cmd/herald
+fi
+export HERALD_BIN
 
 BRIEF="$(printf 'briefing %.0s' $(seq 150))"
 [ "$(printf '%s' "$BRIEF" | wc -w)" -eq 150 ]

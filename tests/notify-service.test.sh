@@ -65,7 +65,13 @@ trap 'rc=$?
   rm -rf "$TMP"
   exit $rc' EXIT INT TERM
 
-[ -x "$REPO/bin/herald" ] || go build -C "$REPO" -o bin/herald ./cmd/herald
+if [ -n "${HERALD_BIN:-}" ]; then
+  [ -x "$HERALD_BIN" ] || { echo "HERALD_BIN is not executable: $HERALD_BIN" >&2; exit 1; }
+else
+  HERALD_BIN="$TMP/herald"
+  go build -C "$REPO" -o "$HERALD_BIN" ./cmd/herald
+fi
+export HERALD_BIN
 
 TAILNET_IP="$(tailscale ip -4 2>/dev/null | head -1)"
 [ -n "$TAILNET_IP" ] || { echo "tailscale ip -4 returned nothing — serve cannot bind (proposal.md precondition)" >&2; exit 1; }
@@ -159,6 +165,7 @@ wait_for_port "$KOKORO_PORT" || { echo "fake kokoro never opened $KOKORO_PORT" >
 # and 3 share this dir and reset its history file between them.
 SERVICE_STATE="$TMP/service-state"
 mkdir -p "$SERVICE_STATE"
+env -u HERALD_NOTIFY_CLIENT_TARGETS \
 HERALD_STATE_DIR="$SERVICE_STATE" \
 HERALD_NOTIFY_PORT="$SERVICE_PORT" \
 HERALD_NOTIFY_BIND_TAILSCALE_IP="$TAILNET_IP" \
@@ -166,7 +173,7 @@ HERALD_KOKORO_BASE_URL="http://127.0.0.1:$KOKORO_PORT" \
 HERALD_NOTIFY_PLAYBACK_HOST="test-host" \
 HERALD_NOTIFY_PLAYBACK_TIMEOUT="5" \
 PATH="$PATH" SSH_LOG="$SSH_LOG" \
-  "$REPO/bin/herald" notify serve > "$TMP/serve.log" 2>&1 &
+  "$HERALD_BIN" notify serve > "$TMP/serve.log" 2>&1 &
 SERVICE_PID=$!
 
 wait_for_health() {
@@ -213,6 +220,8 @@ env \
   HERALD_NOTIFY_SERVICE_URL="http://127.0.0.1:$SERVICE_PORT" \
   HERALD_KOKORO_BASE_URL="http://127.0.0.1:$KOKORO_PORT" \
   HERALD_NOTIFY_PLAYBACK_HOST="test-host" \
+  HERALD_NOTIFY_CLIENT_TARGETS="" \
+  HERDR_PANE_ID="" \
   "$REPO/bin/notify.sh" "case one: service is up" > "$TMP/case1.out" 2>&1
 
 grep -q 'service accepted' "$TMP/case1.out" || {
@@ -242,6 +251,7 @@ env \
   HERALD_NOTIFY_SERVICE_URL="http://127.0.0.1:$DEAD_PORT" \
   HERALD_KOKORO_BASE_URL="http://127.0.0.1:$KOKORO_PORT" \
   HERALD_NOTIFY_PLAYBACK_HOST="test-host" \
+  HERDR_PANE_ID="" \
   "$REPO/bin/notify.sh" "case two: service is down" > "$TMP/case2.out" 2>&1
 
 grep -q 'falling back to the local path' "$TMP/case2.out" || {
@@ -275,6 +285,7 @@ env \
   HERALD_NOTIFY_SERVICE_TIMEOUT="20" \
   HERALD_KOKORO_BASE_URL="http://127.0.0.1:$KOKORO_PORT" \
   HERALD_NOTIFY_PLAYBACK_HOST="test-host" \
+  HERDR_PANE_ID="" \
   "$REPO/bin/notify.sh" "case three: synthesis is slow" > "$TMP/case3.out" 2>&1
 END_NS="$(date +%s%N)"
 ELAPSED_MS=$(( (END_NS - START_NS) / 1000000 ))

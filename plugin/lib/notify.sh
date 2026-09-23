@@ -56,7 +56,14 @@ say_notify() {
   local project="" args=()
   while [ $# -gt 0 ]; do
     case "$1" in
-      -p|--project) project="${2:-}"; shift 2 ;;
+      -p|--project)
+        if [ $# -lt 2 ]; then
+          echo "say_notify: $1 requires a project argument" >&2
+          return 0
+        fi
+        project="$2"
+        shift 2
+        ;;
       --) shift; args+=("$@"); break ;;
       *) args+=("$1"); shift ;;
     esac

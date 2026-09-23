@@ -346,16 +346,28 @@ func AppendRecord(dir string, r Record) error {
 // — it is the first-run state, and returns a nil slice, which is what lets the
 // notify board render an empty history without special-casing it.
 func ReadHistory(dir string) ([]Record, error) {
+	var out []Record
+	err := scanHistory(dir, func(r Record) error {
+		out = append(out, r)
+		return nil
+	})
+	return out, err
+}
+
+func scanHistory(dir string, visit func(Record) error) error {
+	return scanHistoryFile(dir, func(_ int, r Record) error { return visit(r) })
+}
+
+func scanHistoryFile(dir string, visit func(int, Record) error) error {
 	f, err := os.Open(HistoryPath(dir))
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return nil
 		}
-		return nil, fmt.Errorf("notify: open %s: %w", historyFile, err)
+		return fmt.Errorf("notify: open %s: %w", historyFile, err)
 	}
 	defer f.Close()
 
-	var out []Record
 	sc := bufio.NewScanner(f)
 	// Notification text is short, but a caller pasting a stack trace into a
 	// notify call must not corrupt the read for every later row — raise the
@@ -370,12 +382,25 @@ func ReadHistory(dir string) ([]Record, error) {
 		}
 		var r Record
 		if err := json.Unmarshal(b, &r); err != nil {
-			return nil, fmt.Errorf("notify: %s line %d: %w", historyFile, line, err)
+			return fmt.Errorf("notify: %s line %d: %w", historyFile, line, err)
 		}
-		out = append(out, r)
+		if err := visit(line, r); err != nil {
+			return err
+		}
 	}
 	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("notify: scan %s: %w", historyFile, err)
+		return fmt.Errorf("notify: scan %s: %w", historyFile, err)
 	}
-	return out, nil
+	return nil
+}
+
+// CountHistory counts records without retaining them. It still parses every
+// line so corruption remains visible to status callers.
+func CountHistory(dir string) (int, error) {
+	count := 0
+	err := scanHistory(dir, func(Record) error {
+		count++
+		return nil
+	})
+	return count, err
 }

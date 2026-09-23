@@ -40,7 +40,14 @@ WAIT=0
 ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
-    -p|--project) PROJECT="${2:-}"; shift 2 ;;
+    -p|--project)
+      if [ $# -lt 2 ]; then
+        echo "notify: $1 requires a project argument" >&2
+        exit 0
+      fi
+      PROJECT="$2"
+      shift 2
+      ;;
     --wait) WAIT=1; shift ;;
     -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     --) shift; ARGS+=("$@"); break ;;

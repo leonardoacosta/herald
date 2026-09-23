@@ -82,17 +82,21 @@ herald_validate_client_targets() {
   local mapping="${1:-${HERALD_NOTIFY_CLIENT_TARGETS:-}}" entry identity host
   local -A seen=()
   [ -n "${mapping//[[:space:]]/}" ] || return 0
+  [[ "$mapping" != ,* && "$mapping" != *, && "$mapping" != *,,* ]] || {
+    echo "invalid HERALD_NOTIFY_CLIENT_TARGETS: empty entry" >&2
+    return 1
+  }
   IFS=',' read -ra entries <<< "$mapping"
   for entry in "${entries[@]}"; do
     entry="${entry#${entry%%[![:space:]]*}}"
     entry="${entry%${entry##*[![:space:]]}}"
-    [[ "$entry" == *=* ]] || { echo "invalid HERALD_NOTIFY_CLIENT_TARGETS entry: $entry" >&2; return 1; }
+    [[ "$entry" == *=* ]] || { echo "invalid HERALD_NOTIFY_CLIENT_TARGETS entry: missing equals sign" >&2; return 1; }
     identity="${entry%%=*}"; host="${entry#*=}"
     identity="${identity#${identity%%[![:space:]]*}}"; identity="${identity%${identity##*[![:space:]]}}"
     host="${host#${host%%[![:space:]]*}}"; host="${host%${host##*[![:space:]]}}"
-    [[ "$identity" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "invalid client identity in HERALD_NOTIFY_CLIENT_TARGETS: $identity" >&2; return 1; }
-    [[ "$host" != "" && "$host" != -* && "$host" != *[[:space:]]* ]] || { echo "invalid SSH host for identity $identity in HERALD_NOTIFY_CLIENT_TARGETS" >&2; return 1; }
-    [ -z "${seen[$identity]+x}" ] || { echo "duplicate client identity in HERALD_NOTIFY_CLIENT_TARGETS: $identity" >&2; return 1; }
+    [[ "$identity" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$ ]] || { echo "invalid client identity in HERALD_NOTIFY_CLIENT_TARGETS" >&2; return 1; }
+    [[ "$host" != "" && "$host" != -* && "$host" != *[[:space:]]* ]] || { echo "invalid SSH host in HERALD_NOTIFY_CLIENT_TARGETS" >&2; return 1; }
+    [ -z "${seen[$identity]+x}" ] || { echo "duplicate client identity in HERALD_NOTIFY_CLIENT_TARGETS" >&2; return 1; }
     seen[$identity]=1
   done
 }

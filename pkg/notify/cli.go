@@ -501,6 +501,10 @@ func runHistory(args []string, stdout, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil || rejectPositionals(fs, stderr) {
 		return 1
 	}
+	if *n > 100_000 {
+		fmt.Fprintln(stderr, "notify: history limit exceeds 100000")
+		return 1
+	}
 	records, err := TailHistory(ResolveStateDir(), *n)
 	if err != nil {
 		fmt.Fprintf(stderr, "%v\n", err)

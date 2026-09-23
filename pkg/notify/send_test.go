@@ -376,6 +376,54 @@ func TestNotifyHandlerStopDuringDeliveryRecordsCanceled(t *testing.T) {
 // none of these produce a history row, and none reach synthesis or
 // delivery — the failIfCalled stubs turn a regression here into a test
 // failure rather than a silent extra record.
+func TestNotifyHandlerUsesStaticHostWhenClientMappingIsInvalid(t *testing.T) {
+	dir := setupSendTestState(t)
+	t.Setenv("HERALD_NOTIFY_CLIENT_TARGETS", "laptop=configured-host,")
+	t.Setenv(PlaybackHostEnv, "static-host")
+	synthStarted, releaseSynth := make(chan struct{}), make(chan struct{})
+	var gotHost string
+	q := NewSendQueue(SendQueueOptions{
+		Synthesize: func(context.Context, string, Voice) ([]byte, error) {
+			close(synthStarted)
+			<-releaseSynth
+			return []byte("audio"), nil
+		},
+		Deliver: func(_ context.Context, _ string, args ...string) (DeliveryResult, error) {
+			if state, ok := defaultRequests.get(args[0]); ok {
+				gotHost = state.deliveryConfig().PlaybackHost
+			}
+			return DeliveryResult{Outcome: OutcomeDelivered}, nil
+		},
+	})
+	rec := postNotify(q, `{"text":"invalid deployment map fallback","project":"hs","target":"laptop"}`)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status=%d, want 202 (%s)", rec.Code, rec.Body.String())
+	}
+	var accepted struct {
+		RequestID string `json:"request_id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &accepted); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-synthStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("synthesis did not start")
+	}
+	state, ok := defaultRequests.get(accepted.RequestID)
+	if !ok {
+		t.Fatal("accepted request has no captured delivery state")
+	}
+	if got := state.deliveryConfig().PlaybackHost; got != "static-host" {
+		t.Fatalf("captured playback host=%q, want static fallback", got)
+	}
+	close(releaseSynth)
+	waitForHistoryCount(t, dir, 1)
+	if gotHost != "static-host" {
+		t.Fatalf("delivered host=%q, want static fallback", gotHost)
+	}
+}
+
 func TestNotifyHandlerRejectsInvalidRequestsWithNoRecord(t *testing.T) {
 	dir := setupSendTestState(t)
 	q := NewSendQueue(SendQueueOptions{

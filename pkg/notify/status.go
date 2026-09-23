@@ -156,8 +156,8 @@ func ReadStatus(dir string) (Status, error) {
 		}
 	}
 
-	if records, err := ReadHistory(dir); err == nil {
-		st.HistoryCount = len(records)
+	if count, err := CountHistory(dir); err == nil {
+		st.HistoryCount = count
 	}
 
 	voices, err := ReadVoices(dir)
@@ -177,14 +177,34 @@ func ReadStatus(dir string) (Status, error) {
 //
 // n <= 0 returns everything, matching `tail -n` having no "zero" meaning here.
 func TailHistory(dir string, n int) ([]Record, error) {
-	records, err := ReadHistory(dir)
+	if n <= 0 {
+		return ReadHistory(dir)
+	}
+	return tailHistory(dir, n)
+}
+
+func tailHistory(dir string, n int) ([]Record, error) {
+	tail := make([]Record, 0, min(n, 1024))
+	next := 0
+	err := scanHistory(dir, func(record Record) error {
+		if len(tail) < n {
+			tail = append(tail, record)
+			return nil
+		}
+		tail[next] = record
+		next = (next + 1) % n
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	if n <= 0 || n >= len(records) {
-		return records, nil
+	if len(tail) == n && next > 0 {
+		ordered := make([]Record, 0, n)
+		ordered = append(ordered, tail[next:]...)
+		ordered = append(ordered, tail[:next]...)
+		return ordered, nil
 	}
-	return records[len(records)-n:], nil
+	return tail, nil
 }
 
 // ResolveHeraldRoot expands $HERALD the way every shell caller does, so a Go

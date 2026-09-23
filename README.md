@@ -34,8 +34,8 @@ Harness hook or inline Bash
 
       ── primary: service reachable ──────────────────────────────────────────
       → POST /notify (herald notify serve, loopback + tailnet, :8881)
-        → accept + enqueue → 202 (ms)      (history record written here)
-          → async worker: synth → deliver
+        → accept + enqueue → 202 (ms)
+          → async worker: synth → deliver → append outcome history
             → Kokoro-FastAPI               (homelab, compose module owned here)
               → playback host              (ssh + afplay)
 
@@ -61,11 +61,14 @@ bin/notify.sh -p <project-code> "message"
 bin/notify.sh --wait -p <project-code> "playback evidence"
 ```
 
-`bin/notify.sh` always exits 0 and bounds synthesis and playback. Every non-empty
-attempt appends exactly one record to
-`${HERALD_STATE_DIR:-~/.local/state/herald}/notify.ndjson`, including synthesis,
-transport, timeout, and missing-binary failures. There is no local playback path
-or compatibility alias for an older transport.
+`202 Accepted` means queued, not synthesized or played. The asynchronous worker appends
+its eventual outcome to `${HERALD_STATE_DIR:-~/.local/state/herald}/notify.ndjson` after
+synthesis and delivery. A process crash after acceptance but before that append has no durable
+queue recovery guarantee. Check history for completed outcomes; do not infer playback from the
+acceptance response. The local fail-soft path also bounds synthesis and playback, and records
+synthesis, transport, timeout, and missing-binary failures. Local delivery still plays on the
+configured playback host; there is no local-device playback path or compatibility alias for an
+older transport.
 
 Configuration is ONE shared file, `${HERALD_CONFIG_DIR:-~/.config/herald}/config`, read by
 BOTH halves of the pipeline: `bin/lib.sh` via `source` for every CLI/pipe invocation, and the
@@ -104,11 +107,14 @@ Herald resolves that identity through the optional `HERALD_NOTIFY_CLIENT_TARGETS
 formatted as comma-separated `identity=ssh-host` pairs, for example
 `laptop=bb-mac,phone=phone-host`. Set it in the shared deployment file at
 `${HERALD_CONFIG_DIR:-~/.config/herald}/config`, not in a request and not in committed source.
-Identity names use letters, numbers, `.`, `_`, or `-`; hosts are SSH host names or aliases with no
-whitespace and must not start with `-`. Duplicate identities are invalid. Run
-`bin/verify-targets.sh` after editing to validate the mapping without contacting any host, then
-restart `herald-notify.service`. The request never supplies an SSH host. An unknown identity uses
-the configured static playback host above, preserving the normal fallback.
+Identity names follow the request grammar: 1–63 ASCII characters, start with an alphanumeric
+character, then use only alphanumerics, `.`, `_`, or `-`. Hosts must be nonempty SSH names or
+aliases, cannot start with `-`, and cannot contain whitespace. Duplicate keys, empty entries
+(including a trailing comma), and malformed entries invalidate the entire mapping. Entries
+split on the first equals sign. The request never supplies an SSH host. An unknown or absent
+identity, or an invalid mapping, uses the configured static playback host. Configured identities
+map to deployment-owned SSH hosts. Run `bin/verify-targets.sh` after editing to validate the
+mapping without contacting any host, then restart `herald-notify.service`.
 
 Legacy `HERDR_*` notification variables remain fallback reads for one release.
 Kokoro's own service lifecycle is managed separately by `bin/kokoro-sync.sh`; the committed
@@ -136,18 +142,19 @@ contacts the playback host.
 
 ## Verification
 
-Run `./bin/verify.sh` for the canonical local and CI gate. It runs `go test ./...`, mapping validation,
-and the explicit hermetic shell-test allowlist. `bin/verify-targets.sh` is the operational, read-only
-check for the deployed mapping. It prints identities and configuration location, but never sends a
-notification or contacts a host. Live/deployed acceptance and audition scripts are intentionally excluded.
+Run `./bin/verify.sh` for the canonical local and CI gate. It builds one fresh `bin/herald`
+artifact in temporary storage, runs `go test ./...`, mapping validation, and the explicit
+hermetic shell-test allowlist. The gate does not read or replace an executable
+`bin/herald` from the repository or contact live playback providers. `bin/verify-targets.sh`
+checks the deployed mapping without contacting a host. Live/deployed acceptance and audition
+scripts remain excluded.
 
 ## Status
 
-The core pipe extraction is implemented and archived. See `openspec/changes/` for the
-remaining feature proposals in dependency order:
+The core pipe extraction, voice management, plugin, quality, briefing, playback, cancellation, and Jcode integration work is implemented and archived. Current approved work and this reliability change are:
 
-1. `voice-management-core` — safe voice discovery, audition, and mapping management
-2. `herald-cc-plugin` — plugin packaging + the rebuilt `/notify` control surface
-3. `voice-quality` — speed, voice blending, normalization, speakable-text rules
-4. `deep-briefings` — on-demand long-form spoken summaries
-5. `moshi-hook-parity` — event-coverage parity across claude/codex/pi
+1. [`talk-to-me-attention`](openspec/changes/talk-to-me-attention/proposal.md) — event identity, attention policy, channels and skill; ordered tasks in its proposal
+2. [`phone-speech-experiment`](openspec/changes/phone-speech-experiment/proposal.md) — depends on the parent attention-channel contracts; device capability and acceptance gates remain explicit
+3. [`harden-notify-boundaries`](openspec/changes/archive/2026-09-23-harden-notify-boundaries/proposal.md) — implemented reliability improvements for shell options, hermetic verification, target validation, history reads and operator docs
+
+See each proposal's task checklist for current implementation status. Proposal approval does not imply deployment or live-device acceptance.

@@ -56,7 +56,13 @@ trap 'rc=$?
   rm -rf "$TMP"
   exit $rc' EXIT INT TERM
 
-[ -x "$REPO/bin/herald" ] || go build -C "$REPO" -o bin/herald ./cmd/herald
+if [ -n "${HERALD_BIN:-}" ]; then
+  [ -x "$HERALD_BIN" ] || { echo "HERALD_BIN is not executable: $HERALD_BIN" >&2; exit 1; }
+else
+  HERALD_BIN="$TMP/herald"
+  go build -C "$REPO" -o "$HERALD_BIN" ./cmd/herald
+fi
+export HERALD_BIN
 
 free_port() {
   python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()'

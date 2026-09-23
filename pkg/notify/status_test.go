@@ -168,6 +168,13 @@ func TestReadStatusAssemblesEveryField(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadStatus: %v", err)
 	}
+	full, err := ReadHistory(dir)
+	if err != nil {
+		t.Fatalf("ReadHistory: %v", err)
+	}
+	if st.HistoryCount != len(full) {
+		t.Fatalf("status count %d differs from full history count %d", st.HistoryCount, len(full))
+	}
 	if st.Version == "" {
 		t.Error("Version is empty")
 	}
@@ -350,6 +357,17 @@ func TestHistoryCLIJSONWithNFlagEmitsParseableJSON(t *testing.T) {
 	}
 	if records[len(records)-1].Text != "8" {
 		t.Errorf("last record = %q, want the newest (8)", records[len(records)-1].Text)
+	}
+}
+
+func TestHistoryCLILimitsPositiveN(t *testing.T) {
+	setupStatusTestState(t)
+	var stdout, stderr strings.Builder
+	if code := runCLI([]string{"history", "--json", "-n", "100001"}, &stdout, &stderr); code == 0 {
+		t.Fatal("history CLI accepted n above its public bound")
+	}
+	if !strings.Contains(stderr.String(), "history limit exceeds 100000") {
+		t.Fatalf("stderr=%q, want bounded history-limit diagnostic", stderr.String())
 	}
 }
 

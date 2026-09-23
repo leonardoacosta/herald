@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -62,15 +63,39 @@ var ErrNoPlaybackHost = errors.New("notify: playback host is not configured")
 // configuredClientHost resolves an opaque client identity through deployment
 // configuration. Values are comma-separated identity=ssh-host pairs. A
 // request never supplies an SSH host directly.
-func configuredClientHost(client string) (string, bool) {
-	client = strings.TrimSpace(client)
-	for _, entry := range strings.Split(os.Getenv("HERALD_NOTIFY_CLIENT_TARGETS"), ",") {
-		key, host, ok := strings.Cut(entry, "=")
-		if ok && strings.TrimSpace(key) == client && strings.TrimSpace(host) != "" {
-			return strings.TrimSpace(host), true
-		}
+var configuredClientIdentity = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$`)
+
+func parseClientTargetMapping(mapping string) (map[string]string, error) {
+	resolved := make(map[string]string)
+	if strings.TrimSpace(mapping) == "" {
+		return resolved, nil
 	}
-	return "", false
+	for _, raw := range strings.Split(mapping, ",") {
+		entry := strings.TrimSpace(raw)
+		key, host, ok := strings.Cut(entry, "=")
+		key, host = strings.TrimSpace(key), strings.TrimSpace(host)
+		if !ok || !configuredClientIdentity.MatchString(key) || host == "" || strings.HasPrefix(host, "-") || strings.ContainsAny(host, " \t\r\n\v\f") {
+			return nil, errors.New("notify: invalid HERALD_NOTIFY_CLIENT_TARGETS mapping")
+		}
+		if _, duplicate := resolved[key]; duplicate {
+			return nil, errors.New("notify: duplicate identity in HERALD_NOTIFY_CLIENT_TARGETS mapping")
+		}
+		resolved[key] = host
+	}
+	return resolved, nil
+}
+
+func configuredClientHost(client string) (string, bool) {
+	if !configuredClientIdentity.MatchString(strings.TrimSpace(client)) {
+		return "", false
+	}
+	mapping, err := parseClientTargetMapping(os.Getenv("HERALD_NOTIFY_CLIENT_TARGETS"))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return "", false
+	}
+	host, ok := mapping[strings.TrimSpace(client)]
+	return host, ok
 }
 
 func resolvePlaybackHost(cfg DeliveryConfig, client string) string {

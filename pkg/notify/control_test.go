@@ -294,6 +294,14 @@ func TestHandleHistoryMalformedNReturns400(t *testing.T) {
 	}
 }
 
+func TestHandleHistoryRejectsLimitAboveBound(t *testing.T) {
+	setupControlTestState(t)
+	rec := doControl(handleHistory, http.MethodGet, "/history?n=100001", "")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d, want 400 for oversized n (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
 func TestHandleHistoryMethodNotAllowed(t *testing.T) {
 	setupControlTestState(t)
 	rec := doControl(handleHistory, http.MethodPost, "/history", "")

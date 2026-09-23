@@ -1,0 +1,19 @@
+[
+  {"name":"blank","mapping":"","valid":true},
+  {"name":"whitespace","mapping":"   ","valid":true},
+  {"name":"trimmed entry","mapping":" laptop = host ","valid":true,"identity":"laptop","host":"host"},
+  {"name":"first equals in host","mapping":"phone=user@host=domain","valid":true,"identity":"phone","host":"user@host=domain"},
+  {"name":"one character identity","mapping":"a=host","valid":true,"identity":"a","host":"host"},
+  {"name":"63 character identity","mapping":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=host","valid":true},
+  {"name":"leading punctuation","mapping":".laptop=host","valid":false},
+  {"name":"64 character identity","mapping":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=host","valid":false},
+  {"name":"invalid identity character","mapping":"bad/name=host","valid":false},
+  {"name":"duplicate trimmed identity","mapping":"laptop=host,laptop =other","valid":false},
+  {"name":"empty host","mapping":"laptop=","valid":false},
+  {"name":"empty entry","mapping":"laptop=host,,phone=host","valid":false},
+  {"name":"trailing empty entry","mapping":"laptop=host,","valid":false},
+  {"name":"leading empty entry","mapping":",laptop=host","valid":false},
+  {"name":"host begins dash","mapping":"laptop=-option","valid":false},
+  {"name":"host contains whitespace","mapping":"laptop=two hosts","valid":false},
+  {"name":"missing equals","mapping":"laptophost","valid":false}
+]

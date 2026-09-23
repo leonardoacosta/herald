@@ -199,6 +199,10 @@ func handleHistory(w http.ResponseWriter, r *http.Request) {
 		n = parsed
 	}
 
+	if n > 0 && n > 100_000 {
+		writeNotifyJSON(w, http.StatusBadRequest, map[string]string{"error": "notify: history limit exceeds 100000"})
+		return
+	}
 	records, err := TailHistory(ResolveStateDir(), n)
 	if err != nil {
 		writeNotifyJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})

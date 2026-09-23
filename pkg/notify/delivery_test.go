@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,6 +28,45 @@ func TestDeliveryUsesBatchModeSoItNeverPromptsForAPassword(t *testing.T) {
 	joined := strings.Join(DeliverySSHArgs("somehost", ""), " ")
 	if !strings.Contains(joined, "BatchMode=yes") {
 		t.Errorf("delivery argv lacks BatchMode=yes: %s", joined)
+	}
+}
+
+func TestClientTargetMappingSharedContract(t *testing.T) {
+	fixture, err := os.ReadFile(filepath.Join("..", "..", "tests", "fixtures", "client-targets.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct {
+		Name     string `json:"name"`
+		Mapping  string `json:"mapping"`
+		Valid    bool   `json:"valid"`
+		Identity string `json:"identity"`
+		Host     string `json:"host"`
+	}
+	if err := json.Unmarshal(fixture, &cases); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			got, err := parseClientTargetMapping(tc.Mapping)
+			if (err == nil) != tc.Valid {
+				t.Fatalf("valid=%v, want %v (map=%v, err=%v)", err == nil, tc.Valid, got, err)
+			}
+			if tc.Valid && tc.Identity != "" && got[tc.Identity] != tc.Host {
+				t.Fatalf("mapping[%q]=%q, want %q", tc.Identity, got[tc.Identity], tc.Host)
+			}
+		})
+	}
+}
+
+func TestInvalidClientTargetMappingFallsBackToStaticHost(t *testing.T) {
+	for _, mapping := range []string{"laptop=host,", "laptop=host,laptop=other", ".laptop=host", "laptop=-option"} {
+		t.Run(mapping, func(t *testing.T) {
+			t.Setenv("HERALD_NOTIFY_CLIENT_TARGETS", mapping)
+			if got := resolvePlaybackHost(DeliveryConfig{PlaybackHost: "static-host"}, "laptop"); got != "static-host" {
+				t.Fatalf("invalid map selected %q, want static fallback", got)
+			}
+		})
 	}
 }
 
