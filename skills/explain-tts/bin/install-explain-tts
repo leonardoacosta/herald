@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Install the shared transport plus all public aliases into the shared .agents skill store.
+# Usage: install-explain-tts [destination]
+set -u
+
+SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
+DEST_DIR="${1:-$HOME/.agents/skills}"
+[ -n "$DEST_DIR" ] || exit 0
+mkdir -p "$DEST_DIR" 2>/dev/null || exit 0
+
+for skill in explain-tts explain-brief explain-simply explain-mild explain-quick explain-status explain-options explain-help; do
+  src="$SOURCE_DIR"
+  [ "$skill" = explain-tts ] || src="$(cd "$SOURCE_DIR/../$skill" 2>/dev/null && pwd)"
+  [ -d "$src" ] || continue
+  # Copy rather than symlink: the result is portable to a Mac with no shared checkout.
+  rm -rf -- "${DEST_DIR:?}/$skill" 2>/dev/null
+  mkdir -p "$DEST_DIR/$skill"
+  (cd "$src" && tar cf - .) | (cd "$DEST_DIR/$skill" && tar xf -)
+done
+
+printf 'Installed explain-tts bundle to %s\n' "$DEST_DIR"
+printf 'Optional host override: %s\n' "$HOME/.config/explain-tts/config.sh"
+exit 0

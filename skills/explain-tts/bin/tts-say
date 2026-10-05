@@ -1,0 +1,244 @@
+#!/usr/bin/env bash
+# explain-tts: synthesize a spoken script on the homelab Kokoro server and play it on the
+# primary Mac. Bounded, fail-soft, always exit 0. NEVER invoke this with background
+# execution from hooks (notification-loop hazard).
+set -u
+
+_bin="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck disable=SC1091
+. "$_bin/../lib/config.sh"
+
+usage() {
+  cat <<'EOF'
+usage: tts-say [--preset quick|brief|simply|mild] [--dry-run] [--file F] [--lines A-B] "<spoken script>"
+       text sources: inline args > --file/--lines > stdin. Empty input refuses silently.
+EOF
+}
+
+PRESET="brief"; DRY_RUN=0; FILE=""; LINES=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --preset) PRESET="${2:-brief}"; shift 2 ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    --file) FILE="${2:-}"; shift 2 ;;
+    --lines) LINES="${2:-}"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    --*) shift ;;
+    *) break ;;
+  esac
+done
+
+case "$PRESET" in quick) CAP=25 ;; brief) CAP=80 ;; simply) CAP=120 ;; mild) CAP=150 ;; *) CAP=80 ;; esac
+
+TEXT=""
+if [ $# -gt 0 ]; then TEXT="$*"
+elif [ -n "$FILE" ] && [ -r "$FILE" ]; then
+  if [ -n "$LINES" ]; then TEXT="$(sed -n "${LINES}p" "$FILE" 2>/dev/null)"; else TEXT="$(cat "$FILE")"; fi
+elif [ ! -t 0 ]; then TEXT="$(cat)"
+fi
+
+[ -n "$TEXT" ] || exit 0   # refuse silently: nothing to say
+
+# --- speakify: make prose speakable -----------------------------------------
+speakify() {
+  awk '                                   # drop fenced code blocks entirely
+    /^```/ { infence = !infence; next }
+    infence { next }
+    { print }
+  ' | sed \
+    -e 's/`//g' \
+    -e 's/\*\*\([^*]*\)\*\*/\1/g' \
+    -e 's/__\([^_]*\)__/\1/g' \
+    -e 's/\[\([^]]*\)\]([^)]*)/\1/g' \
+    -e 's/!\[\([^]]*\)\]([^)]*)/\1/g' \
+    -e 's/^#[# ]*//' \
+    -e 's/^[[:space:]]*[-*+][[:space:]]*//' \
+    -e 's/[|>{}]//g' \
+    -e 's/https\?:\/\/[^ )]*//g' \
+    -e 's/\bAPI\b/A P I/g; s/\bCLI\b/C L I/g; s/\bURL\b/U R L/g; s/\bHTTP\b/H T T P/g; s/\bHTTPS\b/H T T P S/g' \
+    -e 's/\bSQL\b/S Q L/g; s/\bJSON\b/J S O N/g; s/\bYAML\b/Y A M L/g; s/\bTOML\b/T O M L/g' \
+    -e 's/\bCPU\b/C P U/g; s/\bGPU\b/G P U/g; s/\bRAM\b/R A M/g; s/\bSSD\b/S S D/g' \
+    -e 's/\bSSH\b/S S H/g; s/\bIP address\b/I P address/g; s/\bCI\b/C I/g; s/\bCD\b/C D/g' \
+  | tr '\n\t' '  ' | sed 's/  */ /g; s/^ //; s/ $//'
+}
+
+SPOKEN="$(printf '%s' "$TEXT" | speakify)"
+[ -n "$SPOKEN" ] || exit 0
+
+# --- word-cap enforcement ----------------------------------------------------
+SPOKEN="$(printf '%s' "$SPOKEN" | awk -v n="$CAP" '{ for (i=1; i<=NF && i<n; i++) printf "%s%s", $i, (i<n-1?" ":""); if (NF>=n) print ""; }')"
+
+# --- chunking (>3800 chars splits at spaces) ---------------------------------
+CHUNKS=""
+rest="$SPOKEN"
+while [ ${#rest} -gt 3800 ]; do
+  head_part="${rest:0:3800}"
+  cut="${head_part% *}"
+  CHUNKS="$CHUNKS$cut"$'\x1e'
+  rest="${rest#"$cut"}"
+done
+CHUNKS="$CHUNKS$rest"
+
+if [ "$DRY_RUN" = "1" ]; then
+  i=0
+  printf '%s' "$CHUNKS" | tr '\036' '\n' | while IFS= read -r c; do
+    [ -n "$c" ] || continue
+    i=$((i+1))
+    echo "[dry-run] chunk $i ($(printf '%s' "$c" | wc -c) chars, preset $PRESET cap $CAP): $c"
+  done
+  exit 0
+fi
+
+# --- mute gate ----------------------------------------------------------------
+now="$(date +%s)"
+mute="${EXPLAIN_TTS_MUTE_UNTIL:-}"
+if [ -n "$mute" ] && [ "$now" -lt "$mute" ] 2>/dev/null; then
+  explain_tts_record muted "$PRESET" "${#SPOKEN}" 0 "muted until epoch $mute"
+  exit 0
+fi
+
+# --- local synthesis lock (bounded, fail-open) --------------------------------
+mkdir -p "$EXPLAIN_TTS_STATE_DIR" 2>/dev/null
+LOCK="$EXPLAIN_TTS_STATE_DIR/synth.lock"
+held=0
+i=0
+while [ $i -lt 30 ]; do
+  if mkdir "$LOCK" 2>/dev/null; then held=1; break; fi
+  sleep 0.5; i=$((i+1))
+done
+release() { [ "$held" = 1 ] && rmdir "$LOCK" 2>/dev/null; return 0; }
+trap release EXIT INT TERM
+
+# --- numeric guards ------------------------------------------------------------
+case "$EXPLAIN_TTS_SPEED" in *[!0-9.]*) EXPLAIN_TTS_SPEED="0.95" ;; esac
+
+# --- synthesize ------------------------------------------------------------------
+t_start="$(date +%s)"
+json_escape() { sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
+
+synth_one() {
+  _text="$1" _out="$2"
+  esc="$(printf '%s' "$_text" | json_escape)"
+  body="$(printf '{"model":"%s","input":"%s","voice":"%s","speed":%s,"response_format":"%s"}' \
+    "$EXPLAIN_TTS_MODEL" "$esc" "$EXPLAIN_TTS_VOICE" "$EXPLAIN_TTS_SPEED" "$EXPLAIN_TTS_FORMAT")"
+  code="$(curl -sS --max-time "$EXPLAIN_TTS_SYNTH_TIMEOUT" -o "$_out" -w '%{http_code}' \
+    -X POST "$EXPLAIN_TTS_BASE_URL/v1/audio/speech" \
+    -H 'Content-Type: application/json' -d "$body" 2>/dev/null)"
+  [ "$code" = "200" ] || return 1
+  [ "$(wc -c < "$_out" | tr -d ' ')" -gt 512 ] || return 1
+  head -c 3 "$_out" | grep -q $'ID3' && return 0
+  head -c 2 "$_out" | od -An -tx1 | grep -qE 'ff f[0-9a-f]' && return 0
+  return 1
+}
+
+dur_ms() { echo $(( ($(date +%s) - $1) * 1000 )); }
+
+n=0
+CLIPS=""
+fail_detail=""
+printf '%s\n' "$CHUNKS" | tr '\036' '\n' > "${TMPDIR:-/tmp}/explain-tts-chunks.$$"
+expected_chunks="$(grep -c . "${TMPDIR:-/tmp}/explain-tts-chunks.$$" 2>/dev/null || echo 1)"
+ok_all=1
+while IFS= read -r chunk; do
+  [ -n "$chunk" ] || continue
+  n=$((n+1))
+  clip="${TMPDIR:-/tmp}/explain-tts-clip.$$.${n}.mp3"
+  if ! synth_one "$chunk" "$clip"; then
+    rm -f "$clip"
+    ok_all=0
+    fail_detail="chunk $n synthesis failed"
+    break
+  fi
+  CLIPS="$CLIPS$clip"$'\x1e'
+done < "${TMPDIR:-/tmp}/explain-tts-chunks.$$"
+rm -f "${TMPDIR:-/tmp}/explain-tts-chunks.$$"
+
+cleanup_clips() { printf '%s' "${CLIPS:-}" | tr '\036' '\n' | while IFS= read -r f; do rm -f "$f"; done; return 0; }
+
+if [ "$ok_all" != "1" ]; then
+  cleanup_clips
+  explain_tts_record synth_failed "$PRESET" "${#SPOKEN}" "$n" "$fail_detail"
+  exit 0
+fi
+
+# --- transport -------------------------------------------------------------------
+deliver_local() {
+  _player=""
+  _player_args=""
+  case "$(uname 2>/dev/null)" in
+    Darwin)
+      command -v afplay >/dev/null 2>&1 && _player="afplay"
+      ;;
+    Linux)
+      for _candidate in paplay pw-play mpv ffplay; do
+        if command -v "$_candidate" >/dev/null 2>&1; then
+          _player="$_candidate"
+          [ "$_candidate" = ffplay ] && _player_args="-nodisp -autoexit -loglevel quiet"
+          break
+        fi
+      done
+      ;;
+    MINGW*|MSYS*|CYGWIN*)
+      command -v powershell.exe >/dev/null 2>&1 && _player="powershell.exe"
+      ;;
+  esac
+  [ -n "$_player" ] || return 2
+  printf '%s\n' "$CLIPS" | tr '\036' '\n' | while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    case "$_player" in
+      powershell.exe)
+        powershell.exe -NoProfile -Command "(New-Object Media.SoundPlayer '$f').PlaySync()" ;;
+      ffplay) # shellcheck disable=SC2086
+        ffplay $_player_args "$f" ;;
+      *) "$_player" "$f" ;;
+    esac
+  done
+}
+
+deliver_remote() {
+  [ -r "$_bin/../lib/remote-receiver.sh" ] || return 3
+  REMOTE_CMD="$(cat "$_bin/../lib/remote-receiver.sh")"
+  # The receiver reads the audio from stdin. Preserve the SSH stdin channel, unlike
+  # `ssh -n`, which would make a successful connection deliver an empty clip and hang.
+  joined="${TMPDIR:-/tmp}/explain-tts-joined.$$.mp3"
+  : > "$joined"
+  printf '%s' "$CLIPS" | tr '\036' '\n' | while IFS= read -r f; do
+    [ -n "$f" ] && cat "$f" >> "$joined"
+  done
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$EXPLAIN_TTS_PLAYBACK_TIMEOUT" \
+      ssh -o BatchMode=yes -o ConnectTimeout=6 "$EXPLAIN_TTS_SSH_HOST" "$REMOTE_CMD" < "$joined"
+    _rc=$?
+  else
+    # macOS without coreutils: ConnectTimeout still bounds the connect phase.
+    ssh -o BatchMode=yes -o ConnectTimeout=6 "$EXPLAIN_TTS_SSH_HOST" "$REMOTE_CMD" < "$joined"
+    _rc=$?
+  fi
+  rm -f "$joined"
+  return "${_rc:-1}"
+}
+
+if [ "${EXPLAIN_TTS_REMOTE_FIRST:-${EXPLAIN_TTS_PREFER_REMOTE:-0}}" = "1" ]; then
+  deliver_remote; rc=$?
+  if [ "$rc" != "0" ] && [ "$EXPLAIN_TTS_REMOTE_FALLBACK" = "1" ]; then
+    deliver_local; rc=$?
+  fi
+else
+  deliver_local; rc=$?
+  if [ "$rc" != "0" ] && [ "$EXPLAIN_TTS_REMOTE_FALLBACK" = "1" ]; then
+    deliver_remote; rc=$?
+  fi
+fi
+
+detail=""
+case $rc in
+  0) outcome="delivered" ;;
+  124) outcome="transport_timeout"; detail="playback host asleep or unreachable after ${EXPLAIN_TTS_PLAYBACK_TIMEOUT}s" ;;
+  2) outcome="transport_failed"; detail="no supported local audio player" ;;
+  255) outcome="transport_failed"; detail="ssh connection failed to $EXPLAIN_TTS_SSH_HOST" ;;
+  *) outcome="transport_failed"; detail="transport exited $rc" ;;
+esac
+explain_tts_record "$outcome" "$PRESET" "${#SPOKEN}" "$expected_chunks" "$detail (took $(dur_ms $t_start)ms)"
+cleanup_clips
+[ "$outcome" = "delivered" ] && echo "explain-tts: spoke ${#SPOKEN} chars ($expected_chunks clip(s)) as $EXPLAIN_TTS_VOICE"
+exit 0

@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# explain-tts option management. Bare: render effective values. k=v args: validate +
+# atomically persist. Always exits 0; validation failures print to stderr only.
+set -u
+
+_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck disable=SC1091
+. "$_dir/../lib/config.sh"
+
+mkdir -p "$EXPLAIN_TTS_CONFIG_DIR" 2>/dev/null
+
+cur_value() {
+  _k="$1"
+  if [ -r "$EXPLAIN_TTS_OPTIONS_FILE" ]; then
+    _v="$(grep -E "^${_k}=" "$EXPLAIN_TTS_OPTIONS_FILE" | tail -1 | cut -d= -f2-)"
+    [ -n "$_v" ] && { printf '%s' "$_v"; return 0; }
+  fi
+  printf ''
+}
+
+if [ $# -eq 0 ]; then
+  echo "# explain-tts options (file: $EXPLAIN_TTS_OPTIONS_FILE)"
+  explain_tts_effective | while IFS='=' read -r k v; do printf '%-12s %s\n' "$k" "$v"; done
+  echo "# update with: tts-options voice=af_heart speed=1.1 mute_until=<epoch>"
+  exit 0
+fi
+
+updates=""
+for pair in "$@"; do
+  key="${pair%%=*}"
+  val="${pair#*=}"
+  [ "$key" = "$pair" ] && { echo "explain-tts: malformed '$pair' (want key=value)" >&2; exit 0; }
+  case "$key" in
+    speed)
+      ok="$(awk -v v="$val" 'BEGIN{print (v+0==v && v>=0.5 && v<=2.0) ? 1 : 0}' </dev/null)"
+      [ "$ok" = "1" ] || { echo "explain-tts: speed must be 0.5-2.0, got '$val'" >&2; exit 0; }
+      ;;
+    voice)
+      printf '%s' "$val" | grep -Eq '^[a-z]{2}_[A-Za-z0-9_]+(\+[a-z]{2}_[A-Za-z0-9_]+\([0-9]{1,2}\))*$' ||
+        { echo "explain-tts: bad voice '$val' (want id like af_heart or blend af_heart+af_bella(3))" >&2; exit 0; }
+      ;;
+    mute_until)
+      case "$val" in ''|*[!0-9]*) echo "explain-tts: mute_until must be epoch seconds" >&2; exit 0 ;; esac
+      ;;
+    *)
+      echo "explain-tts: unknown option '$key' (allowed: voice, speed, mute_until)" >&2
+      exit 0
+      ;;
+  esac
+  updates="$updates$key=$val\n"
+done
+
+# Merge onto existing persisted values, write atomically.
+tmp="$(mktemp "$EXPLAIN_TTS_CONFIG_DIR/.options.XXXXXX")" || exit 0
+cp "$EXPLAIN_TTS_OPTIONS_FILE" "$tmp" 2>/dev/null || : > "$tmp"
+
+printf '%b' "$updates" | while IFS= read -r pair; do
+  [ -n "$pair" ] || continue
+  key="${pair%%=*}"; val="${pair#*=}"
+  KEY_UP="$(printf '%s' "$key" | tr '[:lower:]' '[:upper:]')"
+  old="$(cur_value "$KEY_UP")"
+  if grep -qE "^${KEY_UP}=" "$tmp" 2>/dev/null; then
+    sed -i.bak "s|^${KEY_UP}=.*|${KEY_UP}=${val}|" "$tmp" && rm -f "$tmp.bak"
+  else
+    printf '%s=%s\n' "$KEY_UP" "$val" >> "$tmp"
+  fi
+  echo "explain-tts: ${key}: ${old:-<default>} -> ${val}"
+done
+
+mv "$tmp" "$EXPLAIN_TTS_OPTIONS_FILE" || { rm -f "$tmp"; echo "explain-tts: persist failed" >&2; }
+exit 0

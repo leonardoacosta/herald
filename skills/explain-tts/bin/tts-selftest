@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# explain-tts status/self-test: health, voice catalog size, latency sample, effective
+# options, recent history. Pass --clip to also run one tiny end-to-end spoken clip.
+set -u
+
+_bin="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck disable=SC1091
+. "$_bin/../lib/config.sh"
+
+echo "== explain-tts status =="
+h="$(curl -sS --max-time 5 -o /dev/null -w '%{http_code} %{time_total}s' "$EXPLAIN_TTS_BASE_URL/health" 2>/dev/null)"
+if [ "${h%% *}" = "200" ]; then
+  echo "kokoro: UP  health=${h}"
+  voices="$(curl -sS --max-time 8 "$EXPLAIN_TTS_BASE_URL/v1/audio/voices" 2>/dev/null | grep -o '"id"' | wc -l | tr -d ' ')"
+  echo "voices: ${voices:-unknown}"
+else
+  echo "kokoro: DOWN (${h:-unreachable}) base_url=$EXPLAIN_TTS_BASE_URL"
+fi
+
+echo "-- effective options --"
+explain_tts_effective | while IFS='=' read -r k v; do printf '%-12s %s\n' "$k" "$v"; done
+echo "-- recent history (last 5) --"
+if [ -r "$EXPLAIN_TTS_HISTORY_FILE" ]; then tail -5 "$EXPLAIN_TTS_HISTORY_FILE"; else echo "(none)"; fi
+
+if [ "${1:-}" = "--clip" ]; then
+  echo "-- end-to-end clip test --"
+  exec "$_bin/tts-say" --preset quick "Explain T T S self test complete."
+fi
+exit 0
