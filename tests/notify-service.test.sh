@@ -42,11 +42,10 @@
 #     being awake — both bin/notify.sh's local delivery leg AND pkg/notify's
 #     Go delivery leg (delivery.go) shell out to a program literally named
 #     "ssh", so one fake on PATH covers both transports.
-#   - `herald notify serve` binds loopback + this box's real tailnet address
-#     (ResolveBindConfig rejects a loopback or wildcard tailnet address
-#     outright — service.go's rejectWildcardOrEmpty), on a free ephemeral port
-#     probed at runtime, never the systemd unit's 8881. That unit is another
-#     task's deliberate end state and is neither stopped nor reconfigured here.
+#   - `herald notify serve` binds loopback + a local non-loopback address,
+#     selected without sending packets or requiring Tailscale. Bind-posture
+#     tests own real tailnet coverage. The port is ephemeral, never the systemd
+#     unit's 8881; that unit is neither stopped nor reconfigured here.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -73,8 +72,13 @@ else
 fi
 export HERALD_BIN
 
-TAILNET_IP="$(tailscale ip -4 2>/dev/null | head -1)"
-[ -n "$TAILNET_IP" ] || { echo "tailscale ip -4 returned nothing — serve cannot bind (proposal.md precondition)" >&2; exit 1; }
+BIND_IP="$(python3 - <<'PY'
+import socket
+with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+    sock.connect(("192.0.2.1", 9))  # Select a local route; UDP connect sends no packets.
+    print(sock.getsockname()[0])
+PY
+)"
 
 free_port() {
   python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()'
@@ -159,7 +163,7 @@ wait_for_port() {
 wait_for_port "$KOKORO_PORT" || { echo "fake kokoro never opened $KOKORO_PORT" >&2; cat "$TMP/kokoro.log" >&2; exit 1; }
 
 # ── The real service, once, for the lifetime of the test ─────────────────────
-# Loopback+tailnet, ONE state dir (ResolveStateDir reads the SERVICE process's
+# Loopback+local interface, ONE state dir (ResolveStateDir reads the SERVICE process's
 # own environment on every request — a client's HERALD_STATE_DIR has no effect
 # on records the async worker writes, only on the LOCAL fallback path). Cases 1
 # and 3 share this dir and reset its history file between them.
@@ -168,7 +172,7 @@ mkdir -p "$SERVICE_STATE"
 env -u HERALD_NOTIFY_CLIENT_TARGETS \
 HERALD_STATE_DIR="$SERVICE_STATE" \
 HERALD_NOTIFY_PORT="$SERVICE_PORT" \
-HERALD_NOTIFY_BIND_TAILSCALE_IP="$TAILNET_IP" \
+HERALD_NOTIFY_BIND_TAILSCALE_IP="$BIND_IP" \
 HERALD_KOKORO_BASE_URL="http://127.0.0.1:$KOKORO_PORT" \
 HERALD_NOTIFY_PLAYBACK_HOST="test-host" \
 HERALD_NOTIFY_PLAYBACK_TIMEOUT="5" \
