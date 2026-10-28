@@ -32,7 +32,7 @@ those turns.
 Next step: `/xxx` : why this
 ```
 
-When the next step points at a bead/proposal/artifact instead of a slash command, expand the
+When the next step points at a tracked issue/proposal/artifact instead of a slash command, expand the
 line to id + one-clause description + lettered choices — a bare ID with no content forces Leo
 to re-open it just to remember what it is:
 
